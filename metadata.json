@@ -1,0 +1,5 @@
+{
+  "name": "Bridge Monitoring Analytics",
+  "description": "Analyze bridge sensor data, visualize time-history curves, and generate automated reports.",
+  "requestFramePermissions": []
+}

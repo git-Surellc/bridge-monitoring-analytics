@@ -1,0 +1,93 @@
+# 桥梁监测分析系统 (Bridge Monitoring Analytics System)
+
+这是一个基于 React 和 Vite 构建的现代化桥梁监测数据分析平台。该系统旨在帮助工程师快速处理桥梁传感器数据，可视化时程曲线，并自动生成分析报告。
+
+## ✨ 主要功能
+
+*   **📊 数据上传与解析**：支持直接拖拽上传 Excel (`.xlsx`, `.xls`) 格式的传感器数据文件。
+*   **🔌 API 批量导入 (后台任务)**：
+    *   支持上传结构物列表 Excel，后台自动批量抓取监测数据。
+    *   **断点续传/去重**：自动识别已下载的月份数据，避免重复请求。
+    *   **后台运行**：关闭网页后任务仍在服务器端继续运行。
+    *   **一键重试**：对于网络波动导致的失败请求，支持单独一键重试。
+*   **💾 数据持久化**：
+    *   内置 SQLite 数据库，自动存储下载的 Excel 文件和生成的报告。
+    *   支持历史数据查询和管理。
+*   **📈 可视化分析**：自动解析数据并绘制高精度的时程曲线图，支持交互式缩放和查看具体数值。
+*   **📝 智能统计**：自动计算每个传感器的关键指标，包括最大值、最小值、发生时间以及振幅/变化量。
+*   **📑 报告导出**：一键生成包含图表和统计数据的专业 Word 报告（带页码和目录）。
+
+## 🛠️ 技术栈
+
+### 前端 (Frontend)
+*   **框架**：[React 19](https://react.dev/) + [Vite](https://vitejs.dev/)
+*   **样式**：[Tailwind CSS 4](https://tailwindcss.com/)
+*   **图表**：[Recharts](https://recharts.org/)
+*   **工具库**：`xlsx` (Excel解析), `docx` (Word生成), `date-fns` (日期处理)
+
+### 后端 (Backend)
+*   **运行时**：Node.js (v18+)
+*   **Web框架**：Express.js
+*   **数据库**：SQLite (`better-sqlite3`)
+*   **功能**：API 代理、文件存储、后台任务队列
+
+## 🚀 快速开始
+
+### 本地开发 (Development)
+
+1.  **安装依赖**：
+    ```bash
+    npm install
+    ```
+
+2.  **启动后端服务** (处理 API 请求和数据库)：
+    ```bash
+    node server/index.js
+    ```
+    *   服务运行在 `http://localhost:3001`
+
+3.  **启动前端开发服务器** (另开终端)：
+    ```bash
+    npm run dev
+    ```
+    *   访问 `http://localhost:3000`
+
+### 部署 (Deployment)
+
+推荐使用 Docker 进行部署，包含完整的前后端环境。
+
+1.  **构建并启动容器**：
+    ```bash
+    docker build -t bridge-analytics .
+    docker run -d -p 3001:3001 --name bridge-app bridge-analytics
+    ```
+
+2.  **访问应用**：
+    打开浏览器访问 `http://<服务器IP>:3001`
+
+### 阿里云部署建议
+
+1.  在阿里云 ECS 上安装 Docker。
+2.  上传代码或通过 Git 拉取。
+3.  运行上述 Docker 命令。
+4.  配置安全组规则，开放 `3001` 端口 (或通过 Nginx 反向代理到 80/443)。
+5.  **数据持久化**：建议挂载宿主机目录以保存数据库和文件：
+    ```bash
+    docker run -d -p 3001:3001 \
+      -v $(pwd)/storage:/app/storage \
+      -v $(pwd)/database.sqlite:/app/database.sqlite \
+      --name bridge-app bridge-analytics
+    ```
+
+## 📖 使用指南
+
+1.  **API 导入**：
+    *   准备结构物列表 Excel (包含 ID, 名称, 类型)。
+    *   在 "API导入" 区域上传列表，选择月份，点击开始。
+    *   系统将在后台下载数据，完成后点击右侧下载图标或直接在仪表盘查看。
+2.  **手动上传**：直接拖拽传感器数据 Excel 到上传区域。
+3.  **生成报告**：点击右上角 "导出 Word"，系统自动生成包含图表和统计的报告。
+
+## 📄 许可证
+
+Apache-2.0
