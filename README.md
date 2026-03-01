@@ -2,6 +2,18 @@
 
 这是一个基于 React 和 Vite 构建的现代化桥梁监测数据分析平台。该系统旨在帮助工程师快速处理桥梁传感器数据，可视化时程曲线，并自动生成分析报告。
 
+## 📅 更新日志 (Changelog)
+
+### v1.1.1 (2026-03-01 v2)
+*   **🔧 配置更新**：将默认部署端口更改为 `8888` 以适配阿里云环境。
+*   **🐳 Docker**：更新 Dockerfile 暴露端口为 `8888`。
+*   **🛠️ 开发**：更新 Vite 代理配置以匹配后端新端口。
+
+### v1.1.0 (2026-03-01 v1)
+*   **✨ 新功能**：添加自动版本管理机制。
+*   **🐛 修复**：修复 Word 导出时图片被压缩变形的问题（动态计算宽高比）。
+*   **💄 UI**：在界面右上角显示详细版本号和构建日期。
+
 ## ✨ 主要功能
 
 *   **📊 数据上传与解析**：支持直接拖拽上传 Excel (`.xlsx`, `.xls`) 格式的传感器数据文件。
@@ -44,7 +56,7 @@
     ```bash
     node server/index.js
     ```
-    *   服务运行在 `http://localhost:3001`
+    *   服务运行在 `http://localhost:8888`
 
 3.  **启动前端开发服务器** (另开终端)：
     ```bash
@@ -59,21 +71,21 @@
 1.  **构建并启动容器**：
     ```bash
     docker build -t bridge-analytics .
-    docker run -d -p 3001:3001 --name bridge-app bridge-analytics
+    docker run -d -p 8888:8888 --name bridge-app bridge-analytics
     ```
 
 2.  **访问应用**：
-    打开浏览器访问 `http://<服务器IP>:3001`
+    打开浏览器访问 `http://<服务器IP>:8888`
 
 ### 阿里云部署建议
 
 1.  在阿里云 ECS 上安装 Docker。
 2.  上传代码或通过 Git 拉取。
 3.  运行上述 Docker 命令。
-4.  配置安全组规则，开放 `3001` 端口 (或通过 Nginx 反向代理到 80/443)。
+4.  配置安全组规则，开放 `8888` 端口 (或通过 Nginx 反向代理到 80/443)。
 5.  **数据持久化**：建议挂载宿主机目录以保存数据库和文件：
     ```bash
-    docker run -d -p 3001:3001 \
+    docker run -d -p 8888:8888 \
       -v $(pwd)/storage:/app/storage \
       -v $(pwd)/database.sqlite:/app/database.sqlite \
       --name bridge-app bridge-analytics
