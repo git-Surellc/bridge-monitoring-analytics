@@ -14,7 +14,12 @@ export const formatSensorTitle = (name: string): string => {
   return name;
 };
 
-export const generateWordReport = async (bridges: BridgeData[], chartImages: Record<string, string>, cover?: ReportCover, reportSections?: ReportSection[]) => {
+export const generateWordReport = async (
+  bridges: BridgeData[], 
+  chartImages: Record<string, { data: string, width: number, height: number }>, 
+  cover?: ReportCover, 
+  reportSections?: ReportSection[]
+) => {
   const docChildren: (Paragraph | Table | TableOfContents)[] = [];
 
   // 1. Cover Page
@@ -162,27 +167,44 @@ export const generateWordReport = async (bridges: BridgeData[], chartImages: Rec
              for (const sensor of bridge.sensors) {
                const imageData = chartImages[`${bridge.id}-${sensor.id}`];
                
-               docChildren.push(
-                 new Paragraph({
-                   text: formatSensorTitle(sensor.name),
-                   heading: HeadingLevel.HEADING_3,
-                   spacing: { before: 150, after: 80 },
-                 })
-               );
-
                if (imageData) {
-                 const imageBuffer = Uint8Array.from(atob(imageData.split(',')[1]), c => c.charCodeAt(0));
+                 const imageBuffer = Uint8Array.from(atob(imageData.data.split(',')[1]), c => c.charCodeAt(0));
+                 
+                 // Calculate aspect ratio and dimensions
+                 const targetWidth = 600; // Increased width for better visibility
+                 const targetHeight = (imageData.height / imageData.width) * targetWidth;
+
+                 docChildren.push(
+                   new Paragraph({
+                     text: formatSensorTitle(sensor.name),
+                     heading: HeadingLevel.HEADING_3,
+                     spacing: { before: 150, after: 80 },
+                   })
+                 );
+
                  docChildren.push(
                    new Paragraph({
                      children: [
                        new ImageRun({
                          data: imageBuffer,
-                         transformation: { width: 500, height: 250 },
+                         transformation: { 
+                           width: targetWidth, 
+                           height: targetHeight 
+                         },
                          type: 'png',
                        }),
                      ],
                      alignment: AlignmentType.CENTER,
                      spacing: { after: 200 },
+                   })
+                 );
+               } else {
+                  // If no image, just add the title
+                  docChildren.push(
+                   new Paragraph({
+                     text: formatSensorTitle(sensor.name),
+                     heading: HeadingLevel.HEADING_3,
+                     spacing: { before: 150, after: 80 },
                    })
                  );
                }

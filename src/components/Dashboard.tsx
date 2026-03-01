@@ -114,7 +114,7 @@ export function Dashboard({ bridges, onClear, onBack }: DashboardProps) {
     await new Promise(resolve => setTimeout(resolve, 50));
 
     try {
-      const chartImages: Record<string, string> = {};
+      const chartImages: Record<string, { data: string, width: number, height: number }> = {};
       
       if (!reportRef.current) return;
 
@@ -132,7 +132,11 @@ export function Dashboard({ bridges, onClear, onBack }: DashboardProps) {
             scale: 4, // Increase scale for better quality in Word
             logging: false,
           });
-          chartImages[id] = canvas.toDataURL('image/png');
+          chartImages[id] = {
+            data: canvas.toDataURL('image/png'),
+            width: canvas.width,
+            height: canvas.height
+          };
         }
       }
 
