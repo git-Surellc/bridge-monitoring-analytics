@@ -12,6 +12,8 @@ import { parseExcelFile } from './utils/excel';
 import { LayoutDashboard, Loader2, FileUp, Globe } from 'lucide-react';
 import { cn } from './utils/cn';
 
+import { APP_VERSION, BUILD_DATE, BUILD_NUMBER } from './version';
+
 export default function App() {
   const [bridges, setBridges] = useState<BridgeData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -75,8 +77,8 @@ export default function App() {
               桥梁监测<span className="text-blue-600">分析系统</span>
             </h1>
           </div>
-          <div className="text-sm text-gray-500">
-            v1.0.0
+          <div className="text-sm text-gray-500 font-mono">
+            v{APP_VERSION} ({BUILD_DATE} {BUILD_NUMBER})
           </div>
         </div>
       </header>
