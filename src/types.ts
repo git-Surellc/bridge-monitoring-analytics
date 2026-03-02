@@ -8,6 +8,8 @@ export interface SensorData {
   id: string;
   name: string;
   unit?: string;
+  deviceType?: string;
+  sheetType?: string; // Add sheetType for Excel sheet name categorization
   data: DataPoint[];
   stats?: {
     min: number;
@@ -60,7 +62,7 @@ export interface LogEntry {
   id: string;
   name?: string;
   type?: string;
-  status: 'success' | 'error' | 'info' | 'skipped';
+  status: 'success' | 'error' | 'info' | 'skipped' | 'warning';
   msg: string;
   downloadUrl?: string;
   fromCache?: boolean;

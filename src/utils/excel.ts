@@ -26,10 +26,13 @@ export const parseWorkbook = (workbook: XLSX.WorkBook, fileName: string): Bridge
 
     // Initialize or get existing sensors
     sensorNames.forEach((name, index) => {
-      if (!sensorsMap.has(name)) {
-        sensorsMap.set(name, {
-          id: `sensor-${name}-${index}`, // Use name in ID to ensure uniqueness across sheets if indices differ
+      const key = `${sheetName}::${name}`;
+      if (!sensorsMap.has(key)) {
+        sensorsMap.set(key, {
+          id: `sensor-${sheetName}-${name}-${index}`,
           name: name,
+          deviceType: sheetName,
+          sheetType: sheetName,
           data: [],
           stats: {
             min: Infinity,
@@ -65,7 +68,7 @@ export const parseWorkbook = (workbook: XLSX.WorkBook, fileName: string): Bridge
       
       sensorNames.forEach((name, index) => {
         const val = row[index + 1];
-        const sensor = sensorsMap.get(name);
+        const sensor = sensorsMap.get(`${sheetName}::${name}`);
         
         if (sensor && typeof val === 'number') {
           sensor.data.push({ time: formattedTime, value: val });

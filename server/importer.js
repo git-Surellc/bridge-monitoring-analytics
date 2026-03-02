@@ -144,11 +144,30 @@ async function processImport(month, structures, task, token) {
       task.progress++;
     }
     
-    task.status = 'completed';
+    if (task.status !== 'stopped') {
+      task.status = 'completed';
+    }
   } catch (fatal) {
     task.status = 'failed';
     task.error = fatal.message;
   }
+};
+
+export const stopImportTask = (month) => {
+  if (activeTasks.has(month)) {
+    const task = activeTasks.get(month);
+    if (task.status === 'running') {
+      task.status = 'stopped';
+      task.logs.push({ 
+        id: 'system', 
+        type: 'system', 
+        status: 'warning', 
+        msg: '用户手动停止了任务' 
+      });
+      return true;
+    }
+  }
+  return false;
 };
 
 export const getActiveTask = () => {

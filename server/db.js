@@ -49,4 +49,58 @@ db.exec(`
   );
 `);
 
+// Migration: Fix schema compatibility issues
+try {
+  const columns = db.prepare('PRAGMA table_info(reports)').all();
+  const columnNames = new Set(columns.map(col => col.name));
+  
+  // Check if we have the legacy 'month' column which might have NOT NULL constraint
+  if (columnNames.has('month')) {
+     console.log('Detected legacy reports table schema with "month" column. Migrating...');
+     
+     // 1. Rename old table
+     const backupName = `reports_backup_${Date.now()}`;
+     db.prepare(`ALTER TABLE reports RENAME TO ${backupName}`).run();
+     console.log(`Renamed old reports table to ${backupName}`);
+     
+     // 2. Create new table with correct schema
+     db.exec(`
+      CREATE TABLE IF NOT EXISTS reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT,
+        name TEXT,
+        status TEXT DEFAULT 'pending',
+        progress INTEGER DEFAULT 0,
+        file_path TEXT,
+        error_msg TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+     `);
+     console.log('Created new reports table.');
+     
+     // 3. (Optional) Copy data? 
+     // For now we skip copying as the schema is very different and reports are transient.
+  } else {
+    // Standard migration for missing columns in correct schema
+    const requiredColumns = [
+      { name: 'task_id', type: 'TEXT' },
+      { name: 'name', type: 'TEXT' },
+      { name: 'status', type: "TEXT DEFAULT 'pending'" },
+      { name: 'progress', type: 'INTEGER DEFAULT 0' },
+      { name: 'file_path', type: 'TEXT' },
+      { name: 'error_msg', type: 'TEXT' }
+    ];
+
+    for (const col of requiredColumns) {
+      if (!columnNames.has(col.name)) {
+        console.log(`Migrating reports table: Adding ${col.name} column...`);
+        db.prepare(`ALTER TABLE reports ADD COLUMN ${col.name} ${col.type}`).run();
+      }
+    }
+  }
+} catch (err) {
+  console.error('Migration error:', err);
+}
+
 export default db;

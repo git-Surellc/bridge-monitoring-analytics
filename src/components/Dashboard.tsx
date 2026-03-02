@@ -71,11 +71,15 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
   const refreshDeviceStatus = async () => {
     setIsRefreshingStatus(true);
     try {
-      // Map bridges to { id, name, type }
+      // Pass both structure basic info AND the device definitions (including sheet-based types)
       const structures = bridges.map(b => ({
         id: b.id,
         name: b.name,
-        type: b.type || '1'
+        type: b.type || '1',
+        sensors: b.sensors.map(s => ({
+          name: s.name,
+          deviceType: s.sheetType || s.deviceType || '其他' // Use sheetType as primary category
+        }))
       }));
 
       const res = await fetch('/api/devices/status', {
@@ -86,11 +90,50 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
       
       if (!res.ok) throw new Error('Failed to fetch status');
       const data = await res.json();
-      setDeviceStatuses(data);
+      
+      // Post-process data to aggregate stats based on our local sheet types
+      const processedData = data.map((d: any) => {
+        const structure = bridges.find(b => b.id === d.id);
+        if (!structure) return d;
+        
+        const types: Record<string, { total: number; online: number }> = {};
+        const deviceMap = d.deviceMap || {};
+        
+        // Iterate through OUR known sensors for this structure to calculate stats
+        structure.sensors.forEach(sensor => {
+          const type = sensor.sheetType || sensor.deviceType || '其他';
+          if (!types[type]) types[type] = { total: 0, online: 0 };
+          
+          types[type].total++;
+          
+          // Check status in the returned deviceMap
+          // The map keys are sensor names
+          const status = deviceMap[sensor.name];
+          if (status && status.status === 'online') {
+            types[type].online++;
+          }
+        });
+        
+        const total = Object.values(types).reduce((acc, t) => acc + t.total, 0);
+        const online = Object.values(types).reduce((acc, t) => acc + t.online, 0);
+        
+        return {
+          ...d,
+          stats: {
+            total,
+            online,
+            types
+          }
+        };
+      });
+
+      setDeviceStatuses(processedData);
       setStatusLastUpdated(new Date().toLocaleString());
+      return processedData;
     } catch (err) {
       console.error('Failed to refresh device status', err);
       alert('获取设备状态失败: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      return null;
     } finally {
       setIsRefreshingStatus(false);
     }
@@ -106,6 +149,17 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
   const totalPages = 1 + 1 + 1 + 
     Math.ceil(totalWords / 500) + 
     Math.ceil(totalCharts / 4);
+  
+  // Collect all unique device types from the bridges (which come from Excel sheets)
+  const deviceTypeColumns = Array.from(new Set(
+    bridges.flatMap(b => b.sensors.map(s => s.sheetType || s.deviceType || '其他'))
+  )).filter(Boolean).sort();
+
+  const formatRate = (online?: number, total?: number) => {
+    if (!total) return '-';
+    const percent = Math.round(((online || 0) / total) * 100);
+    return `${percent}% (${online || 0}/${total})`;
+  };
 
   const handleSectionClick = (sectionId: string) => {
     // If template editor is hidden, show it first
@@ -160,69 +214,83 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
     setIsExporting(true);
     setExportProgress('正在提交生成任务...');
     
-    try {
-      // 1. Submit task to backend
-      const response = await fetch('/api/reports/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          bridges,
-          cover: reportCover,
-          sections: template.sections,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to start task: ${response.statusText}`);
-      }
-
-      const { taskId } = await response.json();
-      
-      // 2. Poll for status
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusRes = await fetch(`/api/reports/task/${taskId}`);
-          if (!statusRes.ok) return;
-          
-          const task = await statusRes.json();
-          
-          if (task.status === 'completed') {
-            clearInterval(pollInterval);
-            setExportProgress('下载中...');
-            
-            // Trigger download
-            const link = document.createElement('a');
-            link.href = task.downloadUrl;
-            link.download = task.fileName;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            
-            setIsExporting(false);
-            setExportProgress('');
-          } else if (task.status === 'failed') {
-            clearInterval(pollInterval);
-            throw new Error(task.error || 'Generation failed');
-          } else {
-            setExportProgress(`正在后端生成报告... ${task.progress}%`);
-          }
-        } catch (err) {
-          console.error('Polling error:', err);
-          clearInterval(pollInterval);
-          setIsExporting(false);
-          setExportProgress('查询进度失败');
-          alert('查询进度失败');
+    setTimeout(async () => {
+      try {
+        // Ensure we have device statuses
+        let currentStatuses = deviceStatuses;
+        if (!currentStatuses || currentStatuses.length === 0) {
+           setExportProgress('正在同步设备状态...');
+           const fetched = await refreshDeviceStatus();
+           if (fetched) currentStatuses = fetched;
         }
-      }, 2000); // Poll every 2 seconds
 
-    } catch (error) {
-      console.error("Export failed", error);
-      alert("Failed to export report: " + (error instanceof Error ? error.message : 'Unknown error'));
-      setIsExporting(false);
-      setExportProgress('');
-    }
+        setExportProgress('正在提交生成任务...');
+
+        // 1. Submit task to backend
+        const response = await fetch('/api/reports/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            bridges,
+            cover: reportCover,
+            sections: template.sections,
+            deviceStatuses: currentStatuses,
+          }),
+        });
+
+
+        if (!response.ok) {
+          throw new Error(`Failed to start task: ${response.statusText}`);
+        }
+
+        const { taskId } = await response.json();
+        
+        // 2. Poll for status
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusRes = await fetch(`/api/reports/task/${taskId}`);
+            if (!statusRes.ok) return;
+            
+            const task = await statusRes.json();
+            
+            if (task.status === 'completed') {
+              clearInterval(pollInterval);
+              setExportProgress('下载中...');
+              
+              // Trigger download
+              const link = document.createElement('a');
+              link.href = task.downloadUrl;
+              link.download = task.fileName;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              
+              setIsExporting(false);
+              setExportProgress('');
+            } else if (task.status === 'failed') {
+              clearInterval(pollInterval);
+              throw new Error(task.error || 'Generation failed');
+            } else {
+              setExportProgress(`正在后端生成报告... ${task.progress}%`);
+            }
+          } catch (err) {
+            console.error('Polling error:', err);
+            clearInterval(pollInterval);
+            setIsExporting(false);
+            setExportProgress('查询进度失败');
+            alert('查询进度失败');
+          }
+        }, 1000); // Poll every 1 second for faster feedback
+
+      } catch (error) {
+        console.error("Export failed", error);
+        alert("Failed to export report: " + (error instanceof Error ? error.message : 'Unknown error'));
+        setIsExporting(false);
+        setExportProgress('');
+      }
+    }, 100);
   };
 
   const handleExportPDF = async () => {
@@ -531,44 +599,44 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
                         <table className="min-w-full divide-y divide-gray-200">
                           <thead className="bg-gray-50">
                             <tr>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">设备ID</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">设备名称</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">结构名称</th>
+                              {deviceTypeColumns.map((t) => (
+                                <th key={t} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t}</th>
+                              ))}
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">总在线率</th>
                               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最后更新时间</th>
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {deviceStatuses.length > 0 ? (
-                              deviceStatuses.map((device, idx) => (
-                                <tr key={device.id || idx}>
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{device.id}</td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{device.name}</td>
-                                  <td className="px-6 py-4 whitespace-nowrap">
-                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                      device.status === 'online' 
-                                        ? 'bg-green-100 text-green-800' 
-                                        : 'bg-red-100 text-red-800'
-                                    }`}>
-                                      {device.status === 'online' ? '在线' : '离线'}
-                                    </span>
-                                  </td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{device.lastUpdate}</td>
-                                </tr>
-                              ))
+                            {bridges.length > 0 ? (
+                              bridges.map((bridge) => {
+                                const device = deviceStatuses.find(d => d.id === bridge.id) || null;
+                                const stats = device?.stats || {};
+                                const types = stats.types || {};
+                                return (
+                                  <tr key={bridge.id}>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{bridge.name}</td>
+                                    {deviceTypeColumns.map((t) => (
+                                      <td key={t} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        {formatRate(types?.[t]?.online, types?.[t]?.total)}
+                                      </td>
+                                    ))}
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                      {formatRate(stats.online, stats.total)}
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{device?.lastUpdate || '-'}</td>
+                                  </tr>
+                                );
+                              })
                             ) : (
-                              // Show placeholder if no data fetched yet
-                              [1, 2, 3].map((i) => (
-                                <tr key={i} className="opacity-50">
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">DEV-示例-{i}</td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">传感器-{i}</td>
-                                  <td className="px-6 py-4 whitespace-nowrap">
-                                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
-                                      待获取
-                                    </span>
-                                  </td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
-                                </tr>
-                              ))
+                              <tr className="opacity-50">
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">-</td>
+                                {deviceTypeColumns.map((t) => (
+                                  <td key={t} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                                ))}
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                              </tr>
                             )}
                           </tbody>
                         </table>

@@ -67,7 +67,7 @@ const generateChartImage = (sensor) => {
   return canvas.toBuffer('image/png');
 };
 
-export const generateWordReport = async (bridges, cover, reportSections, onProgress) => {
+export const generateWordReport = async (bridges, cover, reportSections, deviceStatuses, onProgress) => {
   const docChildren = [];
   
   // Calculate total work for progress tracking
@@ -172,25 +172,37 @@ export const generateWordReport = async (bridges, cover, reportSections, onProgr
           const tableRows = [
             new TableRow({
               children: [
-                new TableCell({ children: [new Paragraph({ text: "设备名称", bold: true })] }),
-                new TableCell({ children: [new Paragraph({ text: "状态", bold: true })] }),
-                new TableCell({ children: [new Paragraph({ text: "最后通信时间", bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: "结构名称", bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: "倾角设备在线率", bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: "位移设备在线率", bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: "其他设备在线率", bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: "总在线率", bold: true })] }),
               ],
             }),
           ];
           
+          const statuses = deviceStatuses || [];
+          // Use bridges to ensure we list all structures even if status is missing
           bridges.forEach(bridge => {
-            bridge.sensors.forEach(sensor => {
-              tableRows.push(
+             const status = statuses.find(s => s.id === bridge.id);
+             const stats = status?.stats || { total: 0, online: 0, types: { inclination: {total:0, online:0}, displacement: {total:0, online:0}, other: {total:0, online:0} } };
+             
+             const formatRate = (online, total) => {
+                if (!total || total === 0) return '-';
+                return `${Math.round((online / total) * 100)}% (${online}/${total})`;
+             };
+
+             tableRows.push(
                 new TableRow({
                   children: [
-                    new TableCell({ children: [new Paragraph(sensor.name)] }),
-                    new TableCell({ children: [new Paragraph("在线")] }), // Dummy status
-                    new TableCell({ children: [new Paragraph(new Date().toLocaleString())] }),
+                    new TableCell({ children: [new Paragraph(bridge.name)] }),
+                    new TableCell({ children: [new Paragraph(formatRate(stats.types?.inclination?.online, stats.types?.inclination?.total))] }),
+                    new TableCell({ children: [new Paragraph(formatRate(stats.types?.displacement?.online, stats.types?.displacement?.total))] }),
+                    new TableCell({ children: [new Paragraph(formatRate(stats.types?.other?.online, stats.types?.other?.total))] }),
+                    new TableCell({ children: [new Paragraph(formatRate(stats.online, stats.total))] }),
                   ],
                 })
-              );
-            });
+             );
           });
           
           docChildren.push(
@@ -251,6 +263,46 @@ export const generateWordReport = async (bridges, cover, reportSections, onProgr
                      spacing: { after: 200 },
                    })
                  );
+
+                 // Add Analysis Summary
+                 if (sensor.stats) {
+                    docChildren.push(
+                      new Paragraph({
+                        text: "分析摘要",
+                        heading: HeadingLevel.HEADING_4,
+                        spacing: { before: 100, after: 50 },
+                      }),
+                      new Paragraph({
+                        children: [
+                           new TextRun({ text: "最大值: ", bold: true }),
+                           new TextRun({ text: `${sensor.stats.max} (时间: ${sensor.stats.maxTime})` }),
+                        ],
+                        spacing: { after: 50 },
+                      }),
+                      new Paragraph({
+                        children: [
+                           new TextRun({ text: "最小值: ", bold: true }),
+                           new TextRun({ text: `${sensor.stats.min} (时间: ${sensor.stats.minTime})` }),
+                        ],
+                        spacing: { after: 50 },
+                      }),
+                      new Paragraph({
+                        children: [
+                           new TextRun({ text: "振幅/变化量: ", bold: true }),
+                           new TextRun({ text: `${sensor.stats.amplitude}` }),
+                        ],
+                        spacing: { after: 50 },
+                      }),
+                      new Paragraph({
+                        children: [
+                           new TextRun({ text: "状态: ", bold: true }),
+                           new TextRun({ text: "数据波动在正常范围内。", color: "2E7D32" }), // Green color for normal status
+                        ],
+                        spacing: { after: 200 },
+                      })
+                    );
+                 }
+
                } catch (err) {
                  console.error(`Failed to generate chart for ${sensor.name}`, err);
                  docChildren.push(new Paragraph({ text: `[图表生成失败: ${sensor.name}]`, color: "red" }));

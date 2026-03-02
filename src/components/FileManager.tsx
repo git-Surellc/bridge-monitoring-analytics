@@ -179,6 +179,13 @@ export function FileManager() {
     return `/api/reports/download/${filename}`;
   };
 
+  const getDownloadUrl = (file: ImportedFile) => {
+    // If file_path is absolute/relative path from server, we need to extract filename
+    // Assuming file_path stores something like 'storage/excel/filename.xlsx' or full path
+    const filename = file.file_path.split(/[/\\]/).pop();
+    return `/api/files/download/${filename}`;
+  };
+
   // Filter logic
   const filteredFiles = files.filter(file => {
     const matchMonth = filterMonth ? file.month.includes(filterMonth) : true;

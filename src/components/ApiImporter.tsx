@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { BridgeData, LogEntry } from '../types';
 import { parseExcelArrayBuffer } from '../utils/excel';
-import { Loader2, CheckCircle, AlertCircle, Play, FileInput, Bug, Download, ArrowRight, Lock, Unlock, Key } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Play, FileInput, Bug, Download, ArrowRight, Lock, Unlock, Key, StopCircle } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface ApiImporterProps {
@@ -150,6 +150,24 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
     return () => clearInterval(interval);
   }, [month]); 
 
+  const handleStop = async () => {
+    if (!confirm('确定要停止当前导入任务吗？已完成的项目将保留。')) return;
+    
+    try {
+      const res = await fetch('/api/import/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ month })
+      });
+      if (!res.ok) throw new Error('停止失败');
+      
+      setIsProcessing(false);
+      setLogs(prev => [...prev, { id: 'System', status: 'error', msg: '任务已手动停止' }]);
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }; 
+
   const checkStatus = async () => {
     try {
       const res = await fetch(`/api/import/status?month=${month}`);
@@ -157,7 +175,7 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
       
       const data = await res.json();
       
-      if (data.status === 'running' || data.status === 'completed') {
+      if (data.status === 'running' || data.status === 'completed' || data.status === 'stopped') {
         // If we just loaded and found a completed task, DO NOT set wasProcessing to true implicitly
         // We only want to auto-process if we were ALREADY processing, or if it IS running
         const wasProcessing = isProcessing; 
@@ -413,12 +431,22 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
           disabled={isProcessing || structureList.length === 0}
           className={cn(
             "flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-            !isProcessing && logs.some(l => l.status === 'success' || l.status === 'skipped') ? "col-span-1" : "col-span-2"
+            isProcessing || (!isProcessing && logs.some(l => l.status === 'success' || l.status === 'skipped')) ? "col-span-1" : "col-span-2"
           )}
         >
           {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
           {isProcessing ? '后台导入进行中...' : '开始批量导入'}
         </button>
+
+        {isProcessing && (
+          <button
+            onClick={handleStop}
+            className="flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 py-2.5 rounded-lg font-medium transition-colors col-span-1"
+          >
+            <StopCircle className="w-4 h-4" />
+            停止导入
+          </button>
+        )}
 
         {!isProcessing && logs.some(l => l.status === 'success' || l.status === 'skipped') && (
           <button
@@ -462,10 +490,12 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
               <div key={i} className={cn(
                 "flex items-center gap-2", 
                 log.status === 'success' ? 'text-green-700' : 
-                log.status === 'error' ? 'text-red-700' : 'text-gray-600'
+                log.status === 'error' ? 'text-red-700' : 
+                log.status === 'warning' ? 'text-amber-600' : 'text-gray-600'
               )}>
                 {log.status === 'success' && <CheckCircle className="w-3 h-3 shrink-0" />}
                 {log.status === 'error' && <AlertCircle className="w-3 h-3 shrink-0" />}
+                {log.status === 'warning' && <StopCircle className="w-3 h-3 shrink-0" />}
                 {log.status === 'info' && <div className="w-3 h-3 shrink-0" />}
                 {log.status === 'skipped' && <div className="w-3 h-3 shrink-0 text-gray-400">⚡</div>}
                 

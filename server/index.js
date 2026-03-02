@@ -6,7 +6,7 @@ import db from './db.js';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { generateWordReport } from './report/generator.js';
-import { startImportTask, getImportStatus, retryImport, getActiveTask } from './importer.js';
+import { startImportTask, getImportStatus, retryImport, getActiveTask, stopImportTask } from './importer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -40,6 +40,18 @@ app.post('/api/import/start', async (req, res) => {
     res.json({ message: 'Import task started', month });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Stop import task
+app.post('/api/import/stop', (req, res) => {
+  const { month } = req.body;
+  if (!month) return res.status(400).json({ error: 'Month is required' });
+
+  if (stopImportTask(month)) {
+    res.json({ message: 'Task stopped' });
+  } else {
+    res.status(404).json({ error: 'No active task found for this month' });
   }
 });
 
@@ -147,12 +159,36 @@ app.get('/api/auth/status', (req, res) => {
 
 // Device Status API
 app.post('/api/devices/status', async (req, res) => {
-  const { structures } = req.body; // Expect array of { id, name, type }
+  const { structures, devicesByStructure } = req.body;
   
   try {
     const tokenRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('api_token');
     if (!tokenRow) return res.status(401).json({ error: 'No API token found. Please login first.' });
     const token = tokenRow.value;
+
+    const localByStructureId = new Map();
+    if (Array.isArray(devicesByStructure)) {
+      for (const item of devicesByStructure) {
+        const id = item?.id;
+        const devices = Array.isArray(item?.devices) ? item.devices : [];
+        const nameToType = new Map();
+        const totalsByType = {};
+
+        for (const d of devices) {
+          const n = String(d?.name || '').trim();
+          if (!n) continue;
+          const t = d?.deviceType ? String(d.deviceType).trim() : '';
+          if (t) {
+            nameToType.set(n, t);
+            totalsByType[t] = (totalsByType[t] || 0) + 1;
+          }
+        }
+
+        if (id) {
+          localByStructureId.set(id, { nameToType, totalsByType });
+        }
+      }
+    }
 
     const results = [];
     const targetStructures = (structures && Array.isArray(structures)) ? structures : [];
@@ -161,10 +197,11 @@ app.post('/api/devices/status', async (req, res) => {
       try {
         const url = new URL('http://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/sensorList');
         url.searchParams.append('pageNum', '1');
-        url.searchParams.append('pageSize', '50');
+        url.searchParams.append('pageSize', '100'); // Increased limit
         url.searchParams.append('structureName', struct.name);
         url.searchParams.append('structureType', struct.type || '1');
-        url.searchParams.append('pointName', '一体化倾角振动监测仪');
+        // Removed pointName filter to try to get all devices
+        // url.searchParams.append('pointName', '一体化倾角振动监测仪'); 
         url.searchParams.append('status', '');
 
         const response = await fetch(url.toString(), {
@@ -175,38 +212,51 @@ app.post('/api/devices/status', async (req, res) => {
           const data = await response.json();
           if (data.code === 200 && data.records) {
              const sensors = data.records;
-             let isOnline = false;
-             let hasAbnormal = false;
              let latestTime = null;
+             let hasAbnormal = false;
+
+             const deviceMap = {};
+             let onlineCount = 0;
+             let totalCount = sensors.length;
 
              for (const sensor of sensors) {
-                if (sensor.status !== '0') hasAbnormal = true;
-                if (sensor.lastOnlineTime) {
-                   const time = new Date(sensor.lastOnlineTime).getTime();
-                   if (!latestTime || time > latestTime) latestTime = time;
-                }
-             }
+               const name = String(sensor.pointName || sensor.name || sensor.sensorName || '').trim();
+               const isOnline = sensor.lastOnlineTime && (Date.now() - new Date(sensor.lastOnlineTime).getTime() < 2 * 60 * 60 * 1000);
 
-             // Check if online (within 2 hours)
-             if (latestTime && (Date.now() - latestTime < 2 * 60 * 60 * 1000)) {
-                isOnline = true;
+               if (sensor.status !== '0') hasAbnormal = true;
+               if (sensor.lastOnlineTime) {
+                 const time = new Date(sensor.lastOnlineTime).getTime();
+                 if (!latestTime || time > latestTime) latestTime = time;
+               }
+
+               if (isOnline) onlineCount++;
+
+               deviceMap[name] = {
+                 status: isOnline ? 'online' : 'offline',
+                 lastOnlineTime: sensor.lastOnlineTime
+               };
              }
 
              results.push({
                id: struct.id,
                name: struct.name,
-               status: isOnline ? (hasAbnormal ? 'warning' : 'online') : 'offline',
-               lastUpdate: latestTime ? new Date(latestTime).toLocaleString() : 'Never'
+               status: onlineCount > 0 ? (hasAbnormal ? 'warning' : 'online') : 'offline',
+               lastUpdate: latestTime ? new Date(latestTime).toLocaleString() : 'Never',
+               deviceMap,
+               stats: {
+                 total: totalCount,
+                 online: onlineCount
+               }
              });
           } else {
-             results.push({ id: struct.id, name: struct.name, status: 'offline', lastUpdate: '-' });
+             results.push({ id: struct.id, name: struct.name, status: 'offline', lastUpdate: '-', stats: { total: 0, online: 0 } });
           }
         } else {
-           results.push({ id: struct.id, name: struct.name, status: 'error', lastUpdate: '-' });
+           results.push({ id: struct.id, name: struct.name, status: 'error', lastUpdate: '-', stats: { total: 0, online: 0 } });
         }
       } catch (err) {
         console.error(`Failed to fetch status for ${struct.name}:`, err);
-        results.push({ id: struct.id, name: struct.name, status: 'error', lastUpdate: '-' });
+        results.push({ id: struct.id, name: struct.name, status: 'error', lastUpdate: '-', stats: { total: 0, online: 0 } });
       }
     }
 
@@ -258,6 +308,18 @@ app.delete('/api/files/:id', (req, res) => {
     db.prepare('DELETE FROM imports WHERE id = ?').run(id);
     
     res.json({ message: 'File deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/files/download/:filename', (req, res) => {
+  try {
+    const filePath = path.join(EXCEL_DIR, req.params.filename);
+    if (fs.existsSync(filePath)) {
+      return res.download(filePath);
+    }
+    return res.status(404).json({ error: 'File not found' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -334,7 +396,7 @@ app.delete('/api/admin/clear-database', (req, res) => {
 
 app.post('/api/reports/generate', async (req, res) => {
   try {
-    const { bridges, cover, sections } = req.body;
+    const { bridges, cover, sections, deviceStatuses } = req.body;
     if (!bridges || !Array.isArray(bridges)) {
       return res.status(400).json({ error: 'Invalid data' });
     }
@@ -356,7 +418,7 @@ app.post('/api/reports/generate', async (req, res) => {
         db.prepare('UPDATE reports SET status = ?, progress = ? WHERE id = ?').run('processing', 10, reportId);
         
         // Generate Report
-        const buffer = await generateWordReport(bridges, cover, sections, (progress) => {
+        const buffer = await generateWordReport(bridges, cover, sections, deviceStatuses, (progress) => {
            db.prepare('UPDATE reports SET progress = ? WHERE id = ?').run(progress, reportId);
         });
         
@@ -397,6 +459,15 @@ app.get('/api/reports/task/:id', (req, res) => {
 
 app.get('/api/reports/download/:filename', (req, res) => {
   const filePath = path.join(REPORT_DIR, req.params.filename);
+  if (fs.existsSync(filePath)) {
+    res.download(filePath);
+  } else {
+    res.status(404).json({ error: 'File not found' });
+  }
+});
+
+app.get('/api/files/download/:filename', (req, res) => {
+  const filePath = path.join(EXCEL_DIR, req.params.filename);
   if (fs.existsSync(filePath)) {
     res.download(filePath);
   } else {
