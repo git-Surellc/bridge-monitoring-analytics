@@ -44,6 +44,8 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
   const [showTemplateEditor, setShowTemplateEditor] = useState(true);
   const [activeArea, setActiveArea] = useState<'editor' | 'preview'>('editor');
   const [showImportErrors, setShowImportErrors] = useState(false);
+  const [expandedAnalysisBridgeId, setExpandedAnalysisBridgeId] = useState<string | null>(null);
+  const [renderedSensorCharts, setRenderedSensorCharts] = useState<Record<string, boolean>>({});
   
   // Device Status State
   const [deviceStatuses, setDeviceStatuses] = useState<any[]>([]);
@@ -67,6 +69,13 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
       setShowImportErrors(true);
     }
   }, []);
+
+  useEffect(() => {
+    setRenderedSensorCharts({});
+    if (expandedAnalysisBridgeId && !bridges.some(b => b.id === expandedAnalysisBridgeId)) {
+      setExpandedAnalysisBridgeId(null);
+    }
+  }, [bridges]);
 
   const refreshDeviceStatus = async () => {
     setIsRefreshingStatus(true);
@@ -609,67 +618,198 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
 
                   {section.type === 'chart_analysis' && (
                     <div className="space-y-12">
-                      {bridges.length > 0 ? bridges.map((bridge) => (
-                        <div key={bridge.id} className="space-y-8">
-                          <h3 className="text-xl font-semibold text-gray-800 pl-4 border-l-4 border-blue-500">{bridge.name}</h3>
-                          <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                            {bridge.sensors.map((sensor) => (
-                              <div 
-                                key={sensor.id} 
-                                className="sensor-chart-container space-y-4 break-inside-avoid"
-                                data-id={`${bridge.id}-${sensor.id}`}
-                              >
-                                <div className="flex justify-between items-end">
-                                  <h4 className="text-lg font-medium text-gray-700">
-                                    {sensor.name}
-                                  </h4>
-                                  <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-1 rounded">
-                                    ID: {sensor.id}
-                                  </span>
-                                </div>
-
-                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                                  <SensorChart sensor={sensor} />
-                                </div>
-
-                                {sensor.stats && (
-                                  <div className="bg-blue-50 rounded-lg p-4 text-sm text-gray-700 border border-blue-100">
-                                    <h5 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                                      <Activity className="w-4 h-4" />
-                                      分析摘要
-                                    </h5>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                      <div>
-                                        <span className="text-gray-500 block text-xs uppercase tracking-wider">最大值</span>
-                                        <span className="font-mono font-medium text-lg">
-                                          {sensor.stats.max}
-                                        </span>
-                                        <span className="text-xs text-gray-400 block">时间：{sensor.stats.maxTime}</span>
-                                      </div>
-                                      <div>
-                                        <span className="text-gray-500 block text-xs uppercase tracking-wider">最小值</span>
-                                        <span className="font-mono font-medium text-lg">
-                                          {sensor.stats.min}
-                                        </span>
-                                        <span className="text-xs text-gray-400 block">时间：{sensor.stats.minTime}</span>
-                                      </div>
-                                      <div>
-                                        <span className="text-gray-500 block text-xs uppercase tracking-wider">振幅/变化量</span>
-                                        <span className="font-mono font-medium text-lg text-blue-600">
-                                          {sensor.stats.amplitude}
-                                        </span>
-                                      </div>
-                                    </div>
-                                    <div className="mt-3 pt-3 border-t border-blue-100 text-blue-800 text-xs">
-                                      状态：数据波动在正常范围内。
-                                    </div>
-                                  </div>
-                                )}
+                      {bridges.length > 0 ? (
+                        <div className="flex flex-col lg:flex-row gap-8 items-start">
+                          <div
+                            className="w-full lg:w-56 shrink-0 lg:sticky top-48 self-start max-h-[calc(100vh-12rem)] overflow-y-auto print:hidden"
+                            data-html2canvas-ignore="true"
+                          >
+                            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-3">
+                              <div className="text-sm font-semibold text-gray-900">结构导航</div>
+                              <div className="mt-2 space-y-1">
+                                {bridges.map((bridge) => {
+                                  const isActive = expandedAnalysisBridgeId === bridge.id;
+                                  return (
+                                    <button
+                                      key={bridge.id}
+                                      onClick={() => {
+                                        setExpandedAnalysisBridgeId(bridge.id);
+                                        setTimeout(() => {
+                                          const el = document.getElementById(`analysis-bridge-${bridge.id}`);
+                                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                        }, 0);
+                                      }}
+                                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                                        isActive
+                                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                          : 'text-gray-700 hover:bg-gray-50 border border-transparent'
+                                      }`}
+                                      title={bridge.name}
+                                    >
+                                      <div className="truncate">{bridge.name}</div>
+                                    </button>
+                                  );
+                                })}
                               </div>
-                            ))}
+                            </div>
+                          </div>
+
+                          <div className="w-full flex-1 min-w-0 space-y-6">
+                            {!expandedAnalysisBridgeId && (
+                              <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+                                默认不绘制时程曲线以提升性能。请从左侧选择结构名称开始查看。
+                              </div>
+                            )}
+
+                            {bridges.map((bridge) => {
+                              const isExpanded = expandedAnalysisBridgeId === bridge.id;
+                              const renderAllChartsForBridge = () => {
+                                setRenderedSensorCharts((prev) => {
+                                  const next = { ...prev };
+                                  for (const sensor of bridge.sensors) {
+                                    next[`${bridge.id}-${sensor.id}`] = true;
+                                  }
+                                  return next;
+                                });
+                              };
+
+                              const clearChartsForBridge = () => {
+                                setRenderedSensorCharts((prev) => {
+                                  const next = { ...prev };
+                                  for (const sensor of bridge.sensors) {
+                                    delete next[`${bridge.id}-${sensor.id}`];
+                                  }
+                                  return next;
+                                });
+                              };
+
+                              return (
+                                <div
+                                  key={bridge.id}
+                                  id={`analysis-bridge-${bridge.id}`}
+                                  className="border border-gray-200 rounded-xl overflow-hidden bg-white scroll-mt-32"
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedAnalysisBridgeId(isExpanded ? null : bridge.id)}
+                                    className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+                                  >
+                                    <h3 className="text-base sm:text-lg font-semibold text-gray-800 truncate">
+                                      {bridge.name}
+                                    </h3>
+                                    <span className="text-xs text-gray-500 shrink-0 ml-3">
+                                      {isExpanded ? '点击收起' : '点击展开'}
+                                    </span>
+                                  </button>
+
+                                  {isExpanded && (
+                                    <div className="p-4 space-y-8">
+                                      <div className="flex flex-wrap gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={renderAllChartsForBridge}
+                                          className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                                        >
+                                          绘制该结构全部曲线
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={clearChartsForBridge}
+                                          className="text-xs px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+                                        >
+                                          清空曲线
+                                        </button>
+                                      </div>
+
+                                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                                        {bridge.sensors.map((sensor) => {
+                                          const sensorKey = `${bridge.id}-${sensor.id}`;
+                                          const shouldRenderChart = Boolean(renderedSensorCharts[sensorKey]);
+
+                                          return (
+                                            <div
+                                              key={sensor.id}
+                                              className="sensor-chart-container space-y-4 break-inside-avoid"
+                                              data-id={sensorKey}
+                                            >
+                                              <div className="flex justify-between items-end">
+                                                <h4 className="text-lg font-medium text-gray-700">
+                                                  {sensor.name}
+                                                </h4>
+                                                <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-1 rounded">
+                                                  ID: {sensor.id}
+                                                </span>
+                                              </div>
+
+                                              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                                {shouldRenderChart ? (
+                                                  <SensorChart sensor={sensor} />
+                                                ) : (
+                                                  <div className="w-full h-[300px] bg-white rounded-lg p-4 border border-gray-100 flex flex-col items-center justify-center gap-3">
+                                                    <div className="text-sm text-gray-500">
+                                                      曲线已默认关闭（避免卡顿）
+                                                    </div>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        setRenderedSensorCharts((prev) => ({
+                                                          ...prev,
+                                                          [sensorKey]: true,
+                                                        }))
+                                                      }
+                                                      className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                                                    >
+                                                      绘制时程曲线
+                                                    </button>
+                                                  </div>
+                                                )}
+                                              </div>
+
+                                              {sensor.stats && (
+                                                <div className="bg-blue-50 rounded-lg p-4 text-sm text-gray-700 border border-blue-100">
+                                                  <h5 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                                                    <Activity className="w-4 h-4" />
+                                                    分析摘要
+                                                  </h5>
+                                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                    <div>
+                                                      <span className="text-gray-500 block text-xs uppercase tracking-wider">最大值</span>
+                                                      <span className="font-mono font-medium text-lg">
+                                                        {sensor.stats.max}
+                                                      </span>
+                                                      <span className="text-xs text-gray-400 block">时间：{sensor.stats.maxTime}</span>
+                                                    </div>
+                                                    <div>
+                                                      <span className="text-gray-500 block text-xs uppercase tracking-wider">最小值</span>
+                                                      <span className="font-mono font-medium text-lg">
+                                                        {sensor.stats.min}
+                                                      </span>
+                                                      <span className="text-xs text-gray-400 block">时间：{sensor.stats.minTime}</span>
+                                                    </div>
+                                                    <div>
+                                                      <span className="text-gray-500 block text-xs uppercase tracking-wider">振幅/变化量</span>
+                                                      <span className="font-mono font-medium text-lg text-blue-600">
+                                                        {sensor.stats.amplitude}
+                                                      </span>
+                                                    </div>
+                                                  </div>
+                                                  <div className="mt-3 pt-3 border-t border-blue-100 text-blue-800 text-xs">
+                                                    状态：数据波动在正常范围内。
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
-                      )) : (
+                      ) : (
                         <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200 text-gray-400">
                           暂无监测数据，请上传 Excel 文件
                         </div>
