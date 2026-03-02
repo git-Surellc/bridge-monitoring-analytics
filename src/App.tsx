@@ -75,7 +75,7 @@ export default function App() {
               <LayoutDashboard className="w-6 h-6 text-white" />
             </div>
             <h1 className="text-xl font-bold tracking-tight text-gray-900">
-              桥梁监测<span className="text-blue-600">分析系统</span>
+              结构监测<span className="text-blue-600">数据分析系统</span>
             </h1>
           </div>
           <div className="flex items-center gap-6">

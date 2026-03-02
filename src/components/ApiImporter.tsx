@@ -26,7 +26,17 @@ interface StructureItem {
 }
 
 export function ApiImporter({ onImport, className }: ApiImporterProps) {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [month, setMonth] = useState(() => {
+    // Try to recover from localStorage, otherwise default to current month
+    const saved = localStorage.getItem('api_import_month');
+    return saved || new Date().toISOString().slice(0, 7);
+  });
+  
+  // Persist month change
+  useEffect(() => {
+    localStorage.setItem('api_import_month', month);
+  }, [month]);
+
   const [structureList, setStructureList] = useState<StructureItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
@@ -44,9 +54,10 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
         const res = await fetch('/api/import/active');
         if (res.ok) {
           const task = await res.json();
-          if (task.month && task.month !== month) {
+          // Only switch month if there is an ACTIVELY RUNNING task
+          if (task.month && task.month !== month && task.status === 'running') {
             setMonth(task.month);
-            // The polling effect will take over from here due to month dependency
+            setIsProcessing(true); // Mark as processing so we can pick up logs
           }
         }
       } catch (e) {
@@ -73,6 +84,10 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
       const data = await res.json();
       
       if (data.status === 'running' || data.status === 'completed') {
+        // If we just loaded and found a completed task, DO NOT set wasProcessing to true implicitly
+        // We only want to auto-process if we were ALREADY processing, or if it IS running
+        const wasProcessing = isProcessing; 
+        
         setIsProcessing(data.status === 'running');
         setProgress({
           current: data.progress || 0,
@@ -83,8 +98,14 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
         
         if (data.logs && Array.isArray(data.logs)) {
           setLogs(data.logs);
-          // Process any new success items that haven't been parsed yet
-          processLogs(data.logs);
+          
+          // CRITICAL FIX: Only auto-import (which triggers navigation) if:
+          // 1. Task is currently running
+          // 2. Task JUST finished (wasProcessing = true)
+          // 3. User manually started it (isProcessing = true)
+          if (data.status === 'running' || wasProcessing) {
+             processLogs(data.logs);
+          }
         }
       } else {
         setIsProcessing(false);
@@ -243,7 +264,10 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
           <input 
             type="month" 
             value={month} 
-            onChange={e => setMonth(e.target.value)}
+            onChange={e => {
+              setMonth(e.target.value);
+              setIsProcessing(false);
+            }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
