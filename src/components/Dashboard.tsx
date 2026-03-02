@@ -5,6 +5,7 @@ import { CoverEditor } from './CoverEditor';
 import { TemplateEditor } from './TemplateEditor';
 import { SectionNavigator } from './SectionNavigator';
 import { FileDown, FileText, Activity, Trash2, LayoutTemplate, Loader2, ArrowLeft, ArrowDown, ArrowUp, AlertTriangle, RefreshCw, Server, CheckCircle2, XCircle } from 'lucide-react';
+import { cn } from '../utils/cn';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
@@ -703,7 +704,6 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
                                          <SensorChart 
                                            sensor={sensor} 
                                            color="#2563eb" 
-                                           height={300}
                                          />
                                       </div>
                                     );
