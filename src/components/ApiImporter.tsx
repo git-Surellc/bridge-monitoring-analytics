@@ -26,6 +26,8 @@ interface StructureItem {
 }
 
 export function ApiImporter({ onImport, className }: ApiImporterProps) {
+  const [isLoadingResults, setIsLoadingResults] = useState(false);
+
   const [month, setMonth] = useState(() => {
     // Try to recover from localStorage, otherwise default to current month
     const saved = localStorage.getItem('api_import_month');
@@ -45,8 +47,42 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
   
   // Track processed IDs to avoid re-parsing same file multiple times
   const processedIdsRef = useRef<Set<string>>(new Set());
+  
+  // Helper to parse logs
+  const processLogs = async (newLogs: LogEntry[]) => {
+    for (const log of newLogs) {
+      // If success and has downloadUrl, and NOT processed yet
+      if ((log.status === 'success' || log.status === 'skipped') && log.downloadUrl && !processedIdsRef.current.has(log.id)) {
+        try {
+          // Mark as processing to avoid race conditions
+          processedIdsRef.current.add(log.id);
 
-  // Check for existing task on mount and periodically
+          const fileRes = await fetch(log.downloadUrl);
+          if (!fileRes.ok) throw new Error('Download failed');
+          
+          const blob = await fileRes.arrayBuffer();
+          
+          // Use name from log if available, else find in structureList, else use ID
+          const name = log.name || structureList.find(s => s.id === log.id)?.name || log.id;
+          
+          const parsedData = await parseExcelArrayBuffer(blob, name);
+          parsedData.id = log.id;
+          parsedData.name = name;
+          
+          // Update parent
+          onImport([parsedData]);
+          
+        } catch (e) {
+          console.error(`Failed to parse ${log.id}`, e);
+          // Allow retry by removing from set? 
+          // Maybe not automatically. User can click retry if needed.
+          processedIdsRef.current.delete(log.id);
+        }
+      }
+    }
+    
+    setIsLoadingResults(false);
+  };
   useEffect(() => {
     // Check for any global active task on mount
     const checkActive = async () => {
@@ -115,38 +151,7 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
     }
   };
 
-  const processLogs = async (newLogs: LogEntry[]) => {
-    for (const log of newLogs) {
-      // If success and has downloadUrl, and NOT processed yet
-      if ((log.status === 'success' || log.status === 'skipped') && log.downloadUrl && !processedIdsRef.current.has(log.id)) {
-        try {
-          // Mark as processing to avoid race conditions
-          processedIdsRef.current.add(log.id);
 
-          const fileRes = await fetch(log.downloadUrl);
-          if (!fileRes.ok) throw new Error('Download failed');
-          
-          const blob = await fileRes.arrayBuffer();
-          
-          // Use name from log if available, else find in structureList, else use ID
-          const name = log.name || structureList.find(s => s.id === log.id)?.name || log.id;
-          
-          const parsedData = await parseExcelArrayBuffer(blob, name);
-          parsedData.id = log.id;
-          parsedData.name = name;
-          
-          // Update parent
-          onImport([parsedData]);
-          
-        } catch (e) {
-          console.error(`Failed to parse ${log.id}`, e);
-          // Allow retry by removing from set? 
-          // Maybe not automatically. User can click retry if needed.
-          processedIdsRef.current.delete(log.id);
-        }
-      }
-    }
-  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -320,14 +325,19 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
         {!isProcessing && logs.some(l => l.status === 'success' || l.status === 'skipped') && (
           <button
             onClick={() => {
+               setIsLoadingResults(true);
                // Reset processed IDs to force re-processing
                processedIdsRef.current.clear();
                processLogs(logs);
             }}
-            className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg font-medium transition-colors col-span-1"
+            disabled={isLoadingResults}
+            className={cn(
+              "flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg font-medium transition-colors col-span-1",
+              isLoadingResults && "opacity-50 cursor-not-allowed"
+            )}
           >
-            <ArrowRight className="w-4 h-4" />
-            加载结果并分析
+            {isLoadingResults ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+            {isLoadingResults ? '加载中...' : '加载结果并分析'}
           </button>
         )}
       </div>

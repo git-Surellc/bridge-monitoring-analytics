@@ -51,13 +51,16 @@ async function processImport(month, structures, task, cookie) {
         db.prepare('UPDATE imports SET structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
           .run(item.name, item.type, existing.id);
 
+        const downloadUrl = `/storage/excel/${path.basename(existing.file_path)}`;
+
         task.success++;
         task.progress++;
         task.logs.push({ 
           id: item.id, 
           status: 'skipped', 
           msg: `已存在 (无需请求): ${item.name}`,
-          fromCache: true 
+          fromCache: true,
+          downloadUrl
         });
         continue;
       }
@@ -160,13 +163,27 @@ export const getImportStatus = (month) => {
   const task = activeTasks.get(month);
   if (task) return task;
   
+  if (!month) return { status: 'idle' };
+
   // If no active task, check DB for summary
-  const total = db.prepare('SELECT COUNT(*) as count FROM imports WHERE month = ?').get(month).count;
-  const success = db.prepare('SELECT COUNT(*) as count FROM imports WHERE month = ? AND status = ?').get(month, 'success').count;
-  const fail = db.prepare('SELECT COUNT(*) as count FROM imports WHERE month = ? AND status = ?').get(month, 'error').count;
+  const rows = db.prepare('SELECT * FROM imports WHERE month = ? ORDER BY structure_id ASC').all(month);
+  const total = rows.length;
   
   if (total > 0) {
-      return { status: 'completed', progress: total, total, success, fail, logs: [] };
+      const success = rows.filter(r => r.status === 'success').length;
+      const fail = rows.filter(r => r.status === 'error').length;
+      
+      // Reconstruct logs from DB
+      const logs = rows.map(row => ({
+        id: row.structure_id,
+        name: row.structure_name,
+        status: row.status === 'success' ? 'success' : 'error',
+        msg: row.status === 'success' ? '已完成' : (row.error_msg || '未知错误'),
+        downloadUrl: row.file_path ? `/storage/excel/${path.basename(row.file_path)}` : null,
+        fromCache: true
+      }));
+
+      return { status: 'completed', progress: total, total, success, fail, logs };
   }
   
   return { status: 'idle' };
