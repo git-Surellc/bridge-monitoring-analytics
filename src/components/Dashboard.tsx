@@ -6,7 +6,6 @@ import { TemplateEditor } from './TemplateEditor';
 import { SectionNavigator } from './SectionNavigator';
 import { FileDown, FileText, Activity, Trash2, LayoutTemplate, Loader2, ArrowLeft, ArrowDown, ArrowUp } from 'lucide-react';
 import html2canvas from 'html2canvas';
-import { generateWordReport } from '../utils/export';
 import jsPDF from 'jspdf';
 
 interface DashboardProps {
@@ -108,46 +107,68 @@ export function Dashboard({ bridges, onClear, onBack }: DashboardProps) {
     if (isExporting) return;
     
     setIsExporting(true);
-    setExportProgress('准备导出...');
+    setExportProgress('正在提交生成任务...');
     
-    // Allow UI to update
-    await new Promise(resolve => setTimeout(resolve, 50));
-
     try {
-      const chartImages: Record<string, { data: string, width: number, height: number }> = {};
-      
-      if (!reportRef.current) return;
+      // 1. Submit task to backend
+      const response = await fetch('/api/reports/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bridges,
+          cover: reportCover,
+          sections: template.sections,
+        }),
+      });
 
-      const charts = reportRef.current.querySelectorAll('.sensor-chart-container');
-      
-      for (let i = 0; i < charts.length; i++) {
-        setExportProgress(`正在生成图表 ${i + 1}/${charts.length}...`);
-        // Allow UI to update between heavy chart renders
-        await new Promise(resolve => setTimeout(resolve, 10));
-        
-        const chartEl = charts[i] as HTMLElement;
-        const id = chartEl.dataset.id;
-        if (id) {
-          const canvas = await html2canvas(chartEl, {
-            scale: 4, // Increase scale for better quality in Word
-            logging: false,
-          });
-          chartImages[id] = {
-            data: canvas.toDataURL('image/png'),
-            width: canvas.width,
-            height: canvas.height
-          };
-        }
+      if (!response.ok) {
+        throw new Error(`Failed to start task: ${response.statusText}`);
       }
 
-      setExportProgress('正在生成 Word 文档...');
-      await new Promise(resolve => setTimeout(resolve, 10));
+      const { taskId } = await response.json();
       
-      await generateWordReport(bridges, chartImages, reportCover, template.sections);
+      // 2. Poll for status
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/reports/task/${taskId}`);
+          if (!statusRes.ok) return;
+          
+          const task = await statusRes.json();
+          
+          if (task.status === 'completed') {
+            clearInterval(pollInterval);
+            setExportProgress('下载中...');
+            
+            // Trigger download
+            const link = document.createElement('a');
+            link.href = task.downloadUrl;
+            link.download = task.fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            setIsExporting(false);
+            setExportProgress('');
+          } else if (task.status === 'failed') {
+            clearInterval(pollInterval);
+            throw new Error(task.error || 'Generation failed');
+          } else {
+            setExportProgress(`正在后端生成报告... ${task.progress}%`);
+          }
+        } catch (err) {
+          console.error('Polling error:', err);
+          clearInterval(pollInterval);
+          setIsExporting(false);
+          setExportProgress('查询进度失败');
+          alert('查询进度失败');
+        }
+      }, 2000); // Poll every 2 seconds
+
     } catch (error) {
       console.error("Export failed", error);
-      alert("Failed to export report");
-    } finally {
+      alert("Failed to export report: " + (error instanceof Error ? error.message : 'Unknown error'));
       setIsExporting(false);
       setExportProgress('');
     }

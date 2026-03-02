@@ -4,6 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import db from './db.js';
 import fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
+import { generateWordReport } from './report/generator.js';
 import { startImportTask, getImportStatus, retryImport, getActiveTask } from './importer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -11,7 +13,7 @@ const app = express();
 const PORT = process.env.PORT || 8888;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // Ensure storage directories exist
 const STORAGE_DIR = path.join(__dirname, '../storage');
@@ -168,6 +170,85 @@ app.delete('/api/admin/clear-database', (req, res) => {
     res.json({ message: 'Database cleared and all files deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Report Generation Task Storage
+const reportTasks = new Map();
+
+app.post('/api/reports/generate', async (req, res) => {
+  try {
+    const { bridges, cover, sections } = req.body;
+    if (!bridges || !Array.isArray(bridges)) {
+      return res.status(400).json({ error: 'Invalid data' });
+    }
+
+    const taskId = uuidv4();
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const fileName = `Report_${timestamp}_${taskId.slice(0, 8)}.docx`;
+    const filePath = path.join(REPORT_DIR, fileName);
+
+    // Initial status
+    reportTasks.set(taskId, { 
+      status: 'pending', 
+      progress: 0, 
+      startTime: Date.now() 
+    });
+
+    // Start background processing
+    (async () => {
+      try {
+        reportTasks.set(taskId, { status: 'processing', progress: 10 });
+        
+        // Generate Report
+        const buffer = await generateWordReport(bridges, cover, sections, (progress) => {
+           reportTasks.set(taskId, { 
+             status: 'processing', 
+             progress,
+             startTime: reportTasks.get(taskId)?.startTime 
+           });
+        });
+        
+        // Write to disk
+        fs.writeFileSync(filePath, buffer);
+        
+        // Update status
+        reportTasks.set(taskId, { 
+          status: 'completed', 
+          progress: 100, 
+          downloadUrl: `/api/reports/download/${fileName}`,
+          fileName: fileName
+        });
+
+        // Cleanup task after 1 hour
+        setTimeout(() => {
+          reportTasks.delete(taskId);
+        }, 3600000);
+
+      } catch (err) {
+        console.error('Report generation failed:', err);
+        reportTasks.set(taskId, { status: 'failed', error: err.message });
+      }
+    })();
+
+    res.json({ taskId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/reports/task/:id', (req, res) => {
+  const task = reportTasks.get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  res.json(task);
+});
+
+app.get('/api/reports/download/:filename', (req, res) => {
+  const filePath = path.join(REPORT_DIR, req.params.filename);
+  if (fs.existsSync(filePath)) {
+    res.download(filePath);
+  } else {
+    res.status(404).json({ error: 'File not found' });
   }
 });
 
