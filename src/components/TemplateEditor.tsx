@@ -195,7 +195,7 @@ export function TemplateEditor({ template, onUpdate }: TemplateEditorProps) {
                   <Activity className="w-5 h-5 text-blue-400" />
                   <div>
                     <p className="font-medium text-slate-700">自动生成图表分析</p>
-                    <p className="text-xs mt-0.5">该章节将自动包含所有选中桥梁传感器的监测数据图表及统计分析。</p>
+                    <p className="text-xs mt-0.5">该章节将自动包含所有选中结构传感器的监测数据图表及统计分析。</p>
                   </div>
                 </div>
               )}

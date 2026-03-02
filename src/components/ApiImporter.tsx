@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { BridgeData, LogEntry } from '../types';
+import { StructureData, LogEntry } from '../types';
 import { parseExcelArrayBuffer } from '../utils/excel';
 import { Loader2, CheckCircle, AlertCircle, Play, FileInput, Bug, Download, ArrowRight, Lock, Unlock, Key, StopCircle } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface ApiImporterProps {
-  onImport: (data: BridgeData[]) => void;
+  onImport: (data: StructureData[]) => void;
   onLogUpdate?: (logs: LogEntry[]) => void;
   className?: string;
 }
@@ -230,7 +230,7 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
         
         if (!id) continue;
 
-        let type = '1'; // Default bridge
+        let type = '1'; // Default structure
         if (typeRaw.includes('隧道') || typeRaw === '2') type = '2';
         else if (typeRaw.includes('边坡') || typeRaw === '3') type = '3';
         
@@ -403,7 +403,7 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
             />
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            Excel 包含三列: ID, 结构名称, 类型(桥梁/隧道/边坡)
+            Excel 包含三列: ID, 结构名称, 类型(结构/隧道/边坡)
           </p>
         </div>
       </div>
@@ -418,7 +418,7 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
               <div key={i} className="flex gap-2 text-blue-600">
                 <span className="w-16 font-mono">{item.id}</span>
                 <span className="flex-1 truncate">{item.name}</span>
-                <span className="w-12 text-right">{item.type === '1' ? '桥梁' : item.type === '2' ? '隧道' : '边坡'}</span>
+                <span className="w-12 text-right">{item.type === '1' ? '结构' : item.type === '2' ? '隧道' : '边坡'}</span>
               </div>
             ))}
           </div>

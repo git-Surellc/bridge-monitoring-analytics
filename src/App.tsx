@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UploadArea } from './components/UploadArea';
 import { ApiImporter } from './components/ApiImporter';
 import { Dashboard } from './components/Dashboard';
 import { FileManager } from './components/FileManager';
-import { BridgeData } from './types';
+import { StructureData } from './types';
 import { parseExcelFile } from './utils/excel';
-import { LayoutDashboard, Loader2, FileUp, Globe, Database, LineChart } from 'lucide-react';
+import { LayoutDashboard, Loader2, FileUp, Globe, Database, LineChart, BookOpen, CheckSquare, BarChart3, FileText } from 'lucide-react';
 import { cn } from './utils/cn';
 
 import { Login } from './components/Login';
@@ -18,9 +18,22 @@ import { APP_VERSION, BUILD_DATE, BUILD_NUMBER } from './version';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return !!localStorage.getItem('auth_token');
+    const token = localStorage.getItem('auth_token');
+    const expiry = localStorage.getItem('auth_expiry');
+    
+    if (!token) return false;
+    
+    // Check if expired (24 hours)
+    if (expiry && Date.now() > parseInt(expiry, 10)) {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_expiry');
+      return false;
+    }
+    
+    return true;
   });
-  const [bridges, setBridges] = useState<BridgeData[]>([]);
+
+  const [structures, setStructures] = useState<StructureData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importMode, setImportMode] = useState<'file' | 'api'>('file');
@@ -32,14 +45,14 @@ export default function App() {
     setIsLoading(true);
     setError(null);
     try {
-      const newBridges: BridgeData[] = [];
+      const newStructures: StructureData[] = [];
       for (const file of files) {
-        const bridgeData = await parseExcelFile(file);
-        newBridges.push(bridgeData);
+        const structureData = await parseExcelFile(file);
+        newStructures.push(structureData);
       }
-      setBridges((prev) => {
+      setStructures((prev) => {
         const existingIds = new Set(prev.map(b => b.id));
-        const uniqueNew = newBridges.filter(b => !existingIds.has(b.id));
+        const uniqueNew = newStructures.filter(b => !existingIds.has(b.id));
         return [...prev, ...uniqueNew];
       });
       setCurrentView('dashboard');
@@ -52,22 +65,19 @@ export default function App() {
   };
 
   const handleClear = () => {
-    setBridges([]);
+    setStructures([]);
     setError(null);
     setCurrentView('upload');
   };
 
-  const handleApiImport = (newBridges: BridgeData[]) => {
-    setBridges((prev) => {
+  const handleApiImport = (newStructures: StructureData[]) => {
+    setStructures((prev) => {
       const existingIds = new Set(prev.map(b => b.id));
-      const uniqueNew = newBridges.filter(b => !existingIds.has(b.id));
+      const uniqueNew = newStructures.filter(b => !existingIds.has(b.id));
       return [...prev, ...uniqueNew];
     });
     // Don't switch immediately if we want to show progress, 
     // but the current logic in ApiImporter handles the flow.
-    // We will let the user choose when to go to dashboard or it happens automatically.
-    // For now, keep existing behavior but we might want to change it 
-    // if we want to show the import logs in the dashboard.
     setCurrentView('dashboard');
   };
 
@@ -81,6 +91,8 @@ export default function App() {
 
   const handleLogin = (token: string) => {
     localStorage.setItem('auth_token', token);
+    // Set expiry to 24 hours from now
+    localStorage.setItem('auth_expiry', (Date.now() + 24 * 60 * 60 * 1000).toString());
     setIsAuthenticated(true);
   };
 
@@ -113,7 +125,7 @@ export default function App() {
               数据导入
             </button>
 
-            {bridges.length > 0 && (
+            {structures.length > 0 && (
               <button 
                 onClick={() => setCurrentView('dashboard')}
                 className={cn(
@@ -170,7 +182,7 @@ export default function App() {
                     开始您的分析
                   </h2>
                   <p className="text-lg text-gray-600">
-                    上传桥梁传感器数据（Excel），即刻生成时程曲线可视化报告，支持导出 Word 和 PDF。
+                    上传结构监测数据（Excel），即刻生成时程曲线可视化报告，支持导出 Word 和 PDF。
                   </p>
                 </div>
 
@@ -209,21 +221,92 @@ export default function App() {
                   <ApiImporter onImport={handleApiImport} onLogUpdate={handleImportLogs} />
                 )}
                 
-                <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
-                  <div className="p-4">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">1</div>
-                    <h3 className="font-medium text-gray-900">数据接入</h3>
-                    <p className="text-sm text-gray-500 mt-1">支持 Excel 文件上传或通过 API 自动同步数据</p>
+                <div className="mt-16 text-left max-w-5xl mx-auto">
+                  <div className="flex items-center gap-2 mb-6 justify-center">
+                    <BookOpen className="w-6 h-6 text-blue-600" />
+                    <h3 className="text-xl font-bold text-gray-900">使用指南</h3>
                   </div>
-                  <div className="p-4">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">2</div>
-                    <h3 className="font-medium text-gray-900">数据管理</h3>
-                    <p className="text-sm text-gray-500 mt-1">在线管理数据库文件，支持批量重命名与清洗</p>
-                  </div>
-                  <div className="p-4">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">3</div>
-                    <h3 className="font-medium text-gray-900">分析报告</h3>
-                    <p className="text-sm text-gray-500 mt-1">自动生成可视化图表，一键导出 Word/PDF 报告</p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Step 1: Data Preparation */}
+                    <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex items-start gap-4">
+                        <div className="bg-blue-100 p-3 rounded-lg shrink-0">
+                          <CheckSquare className="w-6 h-6 text-blue-600" />
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-gray-900 mb-2">1. 数据准备</h4>
+                          <p className="text-sm text-gray-600 mb-3">
+                            支持 Excel (.xlsx) 格式。文件命名建议包含结构名称和日期。
+                          </p>
+                          <div className="bg-gray-50 p-3 rounded-lg text-xs text-gray-500 font-mono border border-gray-100">
+                            Sheet名称 = 传感器类型 (如: 静力水准仪)<br/>
+                            第一列 = 时间 (yyyy-MM-dd HH:mm:ss)<br/>
+                            后续列 = 测点数据 (数值)
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Step 2: Import & Clean */}
+                    <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex items-start gap-4">
+                        <div className="bg-green-100 p-3 rounded-lg shrink-0">
+                          <Database className="w-6 h-6 text-green-600" />
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-gray-900 mb-2">2. 数据导入与清洗</h4>
+                          <p className="text-sm text-gray-600 mb-3">
+                            选择本地文件或使用 API 批量获取。系统会自动识别结构类型。
+                          </p>
+                          <ul className="text-sm text-gray-500 list-disc list-inside space-y-1">
+                            <li>支持多文件批量上传</li>
+                            <li>自动过滤无效数据行</li>
+                            <li>可在"文件管理"中批量重命名</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Step 3: Analysis */}
+                    <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex items-start gap-4">
+                        <div className="bg-purple-100 p-3 rounded-lg shrink-0">
+                          <BarChart3 className="w-6 h-6 text-purple-600" />
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-gray-900 mb-2">3. 可视化分析</h4>
+                          <p className="text-sm text-gray-600 mb-3">
+                            进入分析报表界面，查看各测点的时程曲线和极值统计。
+                          </p>
+                          <ul className="text-sm text-gray-500 list-disc list-inside space-y-1">
+                            <li>左侧导航快速切换结构</li>
+                            <li>自动计算最大/最小值</li>
+                            <li>支持图表缩放与详情查看</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Step 4: Report Generation */}
+                    <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex items-start gap-4">
+                        <div className="bg-orange-100 p-3 rounded-lg shrink-0">
+                          <FileText className="w-6 h-6 text-orange-600" />
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-gray-900 mb-2">4. 报告生成</h4>
+                          <p className="text-sm text-gray-600 mb-3">
+                            自定义报告模板，一键生成包含图表和统计数据的 Word 报告。
+                          </p>
+                          <ul className="text-sm text-gray-500 list-disc list-inside space-y-1">
+                            <li>自动生成目录与章节编号</li>
+                            <li>集成设备在线率统计表</li>
+                            <li>所见即所得的模板编辑</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -231,7 +314,7 @@ export default function App() {
 
             {currentView === 'dashboard' && (
               <Dashboard 
-                bridges={bridges} 
+                structures={structures} 
                 importLogs={importLogs}
                 onClear={handleClear} 
                 onBack={handleBack} 

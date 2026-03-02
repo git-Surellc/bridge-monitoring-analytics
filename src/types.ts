@@ -20,7 +20,7 @@ export interface SensorData {
   };
 }
 
-export interface BridgeData {
+export interface StructureData {
   id: string;
   name: string;
   type?: string;

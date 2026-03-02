@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BridgeData, ReportCover, ReportSection, ReportTemplate, SectionType, LogEntry } from '../types';
+import { StructureData, ReportCover, ReportSection, ReportTemplate, SectionType, LogEntry } from '../types';
 import { SensorChart } from './SensorChart';
 import { CoverEditor } from './CoverEditor';
 import { TemplateEditor } from './TemplateEditor';
@@ -9,7 +9,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
 interface DashboardProps {
-  bridges: BridgeData[];
+  structures: StructureData[];
   importLogs?: LogEntry[];
   onClear: () => void;
   onBack?: () => void;
@@ -36,7 +36,7 @@ const DEFAULT_TEMPLATE: ReportTemplate = {
   ]
 };
 
-export function Dashboard({ bridges, importLogs = [], onClear, onBack }: DashboardProps) {
+export function Dashboard({ structures, importLogs = [], onClear, onBack }: DashboardProps) {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<string>('');
   const [reportCover, setReportCover] = useState<ReportCover>({} as ReportCover);
@@ -44,7 +44,7 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
   const [showTemplateEditor, setShowTemplateEditor] = useState(true);
   const [activeArea, setActiveArea] = useState<'editor' | 'preview'>('editor');
   const [showImportErrors, setShowImportErrors] = useState(false);
-  const [expandedAnalysisBridgeId, setExpandedAnalysisBridgeId] = useState<string | null>(null);
+  const [expandedAnalysisStructureId, setExpandedAnalysisStructureId] = useState<string | null>(null);
   const [renderedSensorCharts, setRenderedSensorCharts] = useState<Record<string, boolean>>({});
   
   // Device Status State
@@ -72,15 +72,15 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
 
   useEffect(() => {
     setRenderedSensorCharts({});
-    if (expandedAnalysisBridgeId && !bridges.some(b => b.id === expandedAnalysisBridgeId)) {
-      setExpandedAnalysisBridgeId(null);
+    if (expandedAnalysisStructureId && !structures.some(b => b.id === expandedAnalysisStructureId)) {
+      setExpandedAnalysisStructureId(null);
     }
-  }, [bridges]);
+  }, [structures]);
 
   const refreshDeviceStatus = async () => {
     setIsRefreshingStatus(true);
     try {
-      const structures = bridges.map(b => ({
+      const structureList = structures.map(b => ({
         id: b.id,
         name: b.name,
         type: b.type || '1'
@@ -89,7 +89,7 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
       const res = await fetch('/api/devices/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ structures })
+        body: JSON.stringify({ structures: structureList })
       });
       
       if (!res.ok) throw new Error('Failed to fetch status');
@@ -108,7 +108,7 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
   };
 
   // Calculate report statistics
-  const totalCharts = bridges.reduce((acc, bridge) => acc + bridge.sensors.length, 0);
+  const totalCharts = structures.reduce((acc, structure) => acc + structure.sensors.length, 0);
   const totalWords = template.sections.reduce((acc, section) => {
     return acc + (section.content?.length || 0);
   }, 0);
@@ -200,7 +200,7 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            bridges,
+            structures,
             cover: reportCover,
             sections: template.sections,
             deviceStatuses: currentStatuses,
@@ -410,7 +410,7 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
       <div className="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-gray-100 sticky top-[64px] z-20">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">分析仪表盘</h2>
-          <p className="text-gray-500">已加载 {bridges.length} 座桥梁数据</p>
+          <p className="text-gray-500">已加载 {structures.length} 个结构物数据</p>
         </div>
         <div className="flex gap-3">
           <button
@@ -471,7 +471,7 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
 
           <div className="flex flex-col lg:flex-row gap-8 items-start">
              {/* Section Navigator - Sticky within Editor Area */}
-             <div className="w-full lg:w-48 shrink-0 lg:sticky top-48 self-start max-h-[calc(100vh-12rem)] overflow-y-auto">
+             <div className="w-full lg:w-72 shrink-0 lg:sticky top-48 self-start max-h-[calc(100vh-12rem)] overflow-y-auto">
               <SectionNavigator 
                 sections={template.sections} 
                 onSectionClick={handleSectionClick}
@@ -575,14 +575,14 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {bridges.length > 0 ? (
-                              bridges.map((bridge) => {
-                                const device = deviceStatuses.find(d => d.id === bridge.id) || null;
+                            {structures.length > 0 ? (
+                              structures.map((structure) => {
+                                const device = deviceStatuses.find(d => d.id === structure.id) || null;
                                 const stats = device?.stats || {};
                                 const types = stats.types || {};
                                 return (
-                                  <tr key={bridge.id}>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{bridge.name}</td>
+                                  <tr key={structure.id}>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{structure.name}</td>
                                     {deviceTypeColumns.map((t) => (
                                       <td key={t} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                         {formatRate(types?.[t]?.online, types?.[t]?.total)}
@@ -618,202 +618,102 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
 
                   {section.type === 'chart_analysis' && (
                     <div className="space-y-12">
-                      {bridges.length > 0 ? (
-                        <div className="flex flex-col lg:flex-row gap-8 items-start">
-                          <div
-                            className="w-full lg:w-56 shrink-0 lg:sticky top-48 self-start max-h-[calc(100vh-12rem)] overflow-y-auto print:hidden"
-                            data-html2canvas-ignore="true"
+                      {structures.map((structure) => {
+                        const isExpanded = expandedAnalysisStructureId === structure.id;
+                        
+                        // Check if we should render charts for this structure
+                        // Render if expanded OR if we've rendered it before (keep in DOM for perf but hidden? No, better remove if huge)
+                        // Actually, for report preview, we want ALL rendered eventually.
+                        // But for performance, let's render on demand or if printing.
+                        
+                        // Logic: If user expands, render.
+                        // If exporting, we might need to force render? handled by isExporting logic or just render all?
+                        // Current logic: just map all.
+                        
+                        return (
+                          <details 
+                            key={structure.id} 
+                            id={`analysis-structure-${structure.id}`}
+                            className="group bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden open:pb-6 transition-all duration-300"
+                            open={isExpanded}
+                            onToggle={(e) => {
+                              if ((e.target as HTMLDetailsElement).open) {
+                                 setExpandedAnalysisStructureId(structure.id);
+                                 setRenderedSensorCharts(prev => {
+                                   const next = { ...prev };
+                                   for (const sensor of structure.sensors) {
+                                     next[`${structure.id}-${sensor.id}`] = true;
+                                   }
+                                   return next;
+                                 });
+                              } else {
+                                 // Optional: clear ID if closed?
+                                 // setExpandedAnalysisStructureId(null);
+                                 
+                                 // Don't clear rendered state to keep charts if reopened quickly?
+                                 // Or clear to save memory? Let's keep them.
+                                 // But if we want to save memory on close:
+                                 /*
+                                 setRenderedSensorCharts(prev => {
+                                   const next = { ...prev };
+                                   for (const sensor of structure.sensors) {
+                                     delete next[`${structure.id}-${sensor.id}`];
+                                   }
+                                   return next;
+                                 });
+                                 */
+                              }
+                            }}
                           >
-                            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-3">
-                              <div className="text-sm font-semibold text-gray-900">结构导航</div>
-                              <div className="mt-2 space-y-1">
-                                {bridges.map((bridge) => {
-                                  const isActive = expandedAnalysisBridgeId === bridge.id;
-                                  return (
-                                    <button
-                                      key={bridge.id}
-                                      onClick={() => {
-                                        setExpandedAnalysisBridgeId(bridge.id);
-                                        setTimeout(() => {
-                                          const el = document.getElementById(`analysis-bridge-${bridge.id}`);
-                                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                        }, 0);
-                                      }}
-                                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                                        isActive
-                                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                          : 'text-gray-700 hover:bg-gray-50 border border-transparent'
-                                      }`}
-                                      title={bridge.name}
-                                    >
-                                      <div className="truncate">{bridge.name}</div>
-                                    </button>
-                                  );
-                                })}
+                            <summary 
+                              className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors list-none select-none"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setExpandedAnalysisStructureId(isExpanded ? null : structure.id);
+                              }}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className={cn("p-2 rounded-lg transition-colors", isExpanded ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-500")}>
+                                  <Activity className="w-5 h-5" />
+                                </div>
+                                <h4 className="text-lg font-bold text-gray-900">
+                                  {structure.name}
+                                </h4>
+                                <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                                  {structure.sensors.length} 个测点
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 text-gray-400">
+                                <span className="text-sm">{isExpanded ? '收起' : '展开详情'}</span>
+                                {isExpanded ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
+                              </div>
+                            </summary>
+                            
+                            <div className="px-6 pt-2">
+                              {/* Chart Grid */}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {isExpanded && (
+                                  structure.sensors.map((sensor) => {
+                                    const sensorKey = `${structure.id}-${sensor.id}`;
+                                    // Only render if we decided to (for perf) - or just render all when expanded
+                                    // const shouldRender = renderedSensorCharts[sensorKey] || isExporting;
+                                    
+                                    return (
+                                      <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                                         <SensorChart 
+                                           sensor={sensor} 
+                                           color="#2563eb" 
+                                           height={300}
+                                         />
+                                      </div>
+                                    );
+                                  })
+                                )}
                               </div>
                             </div>
-                          </div>
-
-                          <div className="w-full flex-1 min-w-0 space-y-6">
-                            {!expandedAnalysisBridgeId && (
-                              <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
-                                默认不绘制时程曲线以提升性能。请从左侧选择结构名称开始查看。
-                              </div>
-                            )}
-
-                            {bridges.map((bridge) => {
-                              const isExpanded = expandedAnalysisBridgeId === bridge.id;
-                              const renderAllChartsForBridge = () => {
-                                setRenderedSensorCharts((prev) => {
-                                  const next = { ...prev };
-                                  for (const sensor of bridge.sensors) {
-                                    next[`${bridge.id}-${sensor.id}`] = true;
-                                  }
-                                  return next;
-                                });
-                              };
-
-                              const clearChartsForBridge = () => {
-                                setRenderedSensorCharts((prev) => {
-                                  const next = { ...prev };
-                                  for (const sensor of bridge.sensors) {
-                                    delete next[`${bridge.id}-${sensor.id}`];
-                                  }
-                                  return next;
-                                });
-                              };
-
-                              return (
-                                <div
-                                  key={bridge.id}
-                                  id={`analysis-bridge-${bridge.id}`}
-                                  className="border border-gray-200 rounded-xl overflow-hidden bg-white scroll-mt-32"
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => setExpandedAnalysisBridgeId(isExpanded ? null : bridge.id)}
-                                    className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
-                                  >
-                                    <h3 className="text-base sm:text-lg font-semibold text-gray-800 truncate">
-                                      {bridge.name}
-                                    </h3>
-                                    <span className="text-xs text-gray-500 shrink-0 ml-3">
-                                      {isExpanded ? '点击收起' : '点击展开'}
-                                    </span>
-                                  </button>
-
-                                  {isExpanded && (
-                                    <div className="p-4 space-y-8">
-                                      <div className="flex flex-wrap gap-2">
-                                        <button
-                                          type="button"
-                                          onClick={renderAllChartsForBridge}
-                                          className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-                                        >
-                                          绘制该结构全部曲线
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={clearChartsForBridge}
-                                          className="text-xs px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-                                        >
-                                          清空曲线
-                                        </button>
-                                      </div>
-
-                                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                                        {bridge.sensors.map((sensor) => {
-                                          const sensorKey = `${bridge.id}-${sensor.id}`;
-                                          const shouldRenderChart = Boolean(renderedSensorCharts[sensorKey]);
-
-                                          return (
-                                            <div
-                                              key={sensor.id}
-                                              className="sensor-chart-container space-y-4 break-inside-avoid"
-                                              data-id={sensorKey}
-                                            >
-                                              <div className="flex justify-between items-end">
-                                                <h4 className="text-lg font-medium text-gray-700">
-                                                  {sensor.name}
-                                                </h4>
-                                                <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-1 rounded">
-                                                  ID: {sensor.id}
-                                                </span>
-                                              </div>
-
-                                              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                                                {shouldRenderChart ? (
-                                                  <SensorChart sensor={sensor} />
-                                                ) : (
-                                                  <div className="w-full h-[300px] bg-white rounded-lg p-4 border border-gray-100 flex flex-col items-center justify-center gap-3">
-                                                    <div className="text-sm text-gray-500">
-                                                      曲线已默认关闭（避免卡顿）
-                                                    </div>
-                                                    <button
-                                                      type="button"
-                                                      onClick={() =>
-                                                        setRenderedSensorCharts((prev) => ({
-                                                          ...prev,
-                                                          [sensorKey]: true,
-                                                        }))
-                                                      }
-                                                      className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-                                                    >
-                                                      绘制时程曲线
-                                                    </button>
-                                                  </div>
-                                                )}
-                                              </div>
-
-                                              {sensor.stats && (
-                                                <div className="bg-blue-50 rounded-lg p-4 text-sm text-gray-700 border border-blue-100">
-                                                  <h5 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                                                    <Activity className="w-4 h-4" />
-                                                    分析摘要
-                                                  </h5>
-                                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                                    <div>
-                                                      <span className="text-gray-500 block text-xs uppercase tracking-wider">最大值</span>
-                                                      <span className="font-mono font-medium text-lg">
-                                                        {sensor.stats.max}
-                                                      </span>
-                                                      <span className="text-xs text-gray-400 block">时间：{sensor.stats.maxTime}</span>
-                                                    </div>
-                                                    <div>
-                                                      <span className="text-gray-500 block text-xs uppercase tracking-wider">最小值</span>
-                                                      <span className="font-mono font-medium text-lg">
-                                                        {sensor.stats.min}
-                                                      </span>
-                                                      <span className="text-xs text-gray-400 block">时间：{sensor.stats.minTime}</span>
-                                                    </div>
-                                                    <div>
-                                                      <span className="text-gray-500 block text-xs uppercase tracking-wider">振幅/变化量</span>
-                                                      <span className="font-mono font-medium text-lg text-blue-600">
-                                                        {sensor.stats.amplitude}
-                                                      </span>
-                                                    </div>
-                                                  </div>
-                                                  <div className="mt-3 pt-3 border-t border-blue-100 text-blue-800 text-xs">
-                                                    状态：数据波动在正常范围内。
-                                                  </div>
-                                                </div>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200 text-gray-400">
-                          暂无监测数据，请上传 Excel 文件
-                        </div>
-                      )}
+                          </details>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

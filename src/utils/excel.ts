@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { BridgeData, SensorData } from '../types';
+import { StructureData, SensorData } from '../types';
 import { format, addDays } from 'date-fns';
 
 function getExcelDate(serial: number): Date {
@@ -8,7 +8,7 @@ function getExcelDate(serial: number): Date {
   return addDays(epoch, serial);
 }
 
-export const parseWorkbook = (workbook: XLSX.WorkBook, fileName: string): BridgeData => {
+export const parseWorkbook = (workbook: XLSX.WorkBook, fileName: string): StructureData => {
   const sensorsMap = new Map<string, SensorData>();
 
   workbook.SheetNames.forEach(sheetName => {
@@ -112,15 +112,15 @@ export const parseWorkbook = (workbook: XLSX.WorkBook, fileName: string): Bridge
   };
 };
 
-export const parseExcelFile = async (file: File): Promise<BridgeData> => {
+export const parseExcelFile = async (file: File): Promise<StructureData> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
         const workbook = XLSX.read(data, { type: 'binary' });
-        const bridgeData = parseWorkbook(workbook, file.name);
-        resolve(bridgeData);
+        const structureData = parseWorkbook(workbook, file.name);
+        resolve(structureData);
       } catch (err) {
         reject(err);
       }
@@ -130,7 +130,7 @@ export const parseExcelFile = async (file: File): Promise<BridgeData> => {
   });
 };
 
-export const parseExcelArrayBuffer = async (buffer: ArrayBuffer, fileName: string): Promise<BridgeData> => {
+export const parseExcelArrayBuffer = async (buffer: ArrayBuffer, fileName: string): Promise<StructureData> => {
   try {
     const workbook = XLSX.read(buffer, { type: 'array' });
     return parseWorkbook(workbook, fileName);

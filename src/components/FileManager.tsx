@@ -406,7 +406,7 @@ export function FileManager() {
                       <div className="text-xs text-gray-400">{file.structure_id}</div>
                     </td>
                     <td className="px-6 py-4 text-gray-600">
-                      {file.structure_type === '1' ? '桥梁' : file.structure_type === '2' ? '隧道' : '边坡'}
+                      {file.structure_type === '1' ? '结构' : file.structure_type === '2' ? '隧道' : '边坡'}
                     </td>
                     <td className="px-6 py-4">
                       <span className={cn(
