@@ -159,39 +159,42 @@ app.get('/api/auth/status', (req, res) => {
 
 // Device Status API
 app.post('/api/devices/status', async (req, res) => {
-  const { structures, devicesByStructure } = req.body;
+  const { structures } = req.body;
   
   try {
     const tokenRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('api_token');
     if (!tokenRow) return res.status(401).json({ error: 'No API token found. Please login first.' });
     const token = tokenRow.value;
 
-    const localByStructureId = new Map();
-    if (Array.isArray(devicesByStructure)) {
-      for (const item of devicesByStructure) {
-        const id = item?.id;
-        const devices = Array.isArray(item?.devices) ? item.devices : [];
-        const nameToType = new Map();
-        const totalsByType = {};
-
-        for (const d of devices) {
-          const n = String(d?.name || '').trim();
-          if (!n) continue;
-          const t = d?.deviceType ? String(d.deviceType).trim() : '';
-          if (t) {
-            nameToType.set(n, t);
-            totalsByType[t] = (totalsByType[t] || 0) + 1;
-          }
-        }
-
-        if (id) {
-          localByStructureId.set(id, { nameToType, totalsByType });
-        }
-      }
-    }
-
     const results = [];
     const targetStructures = (structures && Array.isArray(structures)) ? structures : [];
+
+    const normalizeDeviceType = (value) => {
+      const str = String(value || '').trim();
+      return str || '其他';
+    };
+
+    const parseLastOnlineTimeMs = (value) => {
+      if (!value) return null;
+      if (value instanceof Date) {
+        const ms = value.getTime();
+        return Number.isFinite(ms) ? ms : null;
+      }
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+      }
+
+      const raw = String(value).trim();
+      if (!raw) return null;
+
+      const ms1 = Date.parse(raw);
+      if (Number.isFinite(ms1)) return ms1;
+
+      const ms2 = Date.parse(raw.replace(' ', 'T'));
+      if (Number.isFinite(ms2)) return ms2;
+
+      return null;
+    };
 
     for (const struct of targetStructures) {
       try {
@@ -216,26 +219,47 @@ app.post('/api/devices/status', async (req, res) => {
              let hasAbnormal = false;
 
              const deviceMap = {};
-             let onlineCount = 0;
-             let totalCount = sensors.length;
+             const typeCounts = {};
 
              for (const sensor of sensors) {
-               const name = String(sensor.pointName || sensor.name || sensor.sensorName || '').trim();
-               const isOnline = sensor.lastOnlineTime && (Date.now() - new Date(sensor.lastOnlineTime).getTime() < 2 * 60 * 60 * 1000);
+               const name = String(
+                 sensor.pointCode ||
+                 sensor.pointName ||
+                 sensor.measurementPointName ||
+                 sensor.sensorName ||
+                 sensor.pointUniqueCode ||
+                 sensor.pointId ||
+                 sensor.id ||
+                 ''
+               ).trim();
+
+               const lastOnlineMs = parseLastOnlineTimeMs(sensor.lastOnlineTime);
+               const isOnline = lastOnlineMs !== null && (Date.now() - lastOnlineMs < 2 * 60 * 60 * 1000);
+
+               const deviceType = normalizeDeviceType(sensor.pointTypeName);
 
                if (sensor.status !== '0') hasAbnormal = true;
-               if (sensor.lastOnlineTime) {
-                 const time = new Date(sensor.lastOnlineTime).getTime();
-                 if (!latestTime || time > latestTime) latestTime = time;
+               if (lastOnlineMs !== null) {
+                 if (!latestTime || lastOnlineMs > latestTime) latestTime = lastOnlineMs;
                }
 
-               if (isOnline) onlineCount++;
+               if (!typeCounts[deviceType]) {
+                 typeCounts[deviceType] = { total: 0, online: 0 };
+               }
+               typeCounts[deviceType].total += 1;
+               if (isOnline) typeCounts[deviceType].online += 1;
 
-               deviceMap[name] = {
-                 status: isOnline ? 'online' : 'offline',
-                 lastOnlineTime: sensor.lastOnlineTime
-               };
+               if (name) {
+                 deviceMap[name] = {
+                   status: isOnline ? 'online' : 'offline',
+                   lastOnlineTime: sensor.lastOnlineTime,
+                   deviceType,
+                 };
+               }
              }
+
+             const totalCount = Object.values(typeCounts).reduce((acc, v) => acc + (v?.total || 0), 0);
+             const onlineCount = Object.values(typeCounts).reduce((acc, v) => acc + (v?.online || 0), 0);
 
              results.push({
                id: struct.id,
@@ -245,7 +269,8 @@ app.post('/api/devices/status', async (req, res) => {
                deviceMap,
                stats: {
                  total: totalCount,
-                 online: onlineCount
+                 online: onlineCount,
+                 types: typeCounts
                }
              });
           } else {

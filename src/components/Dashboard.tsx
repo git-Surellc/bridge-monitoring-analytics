@@ -71,15 +71,10 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
   const refreshDeviceStatus = async () => {
     setIsRefreshingStatus(true);
     try {
-      // Pass both structure basic info AND the device definitions (including sheet-based types)
       const structures = bridges.map(b => ({
         id: b.id,
         name: b.name,
-        type: b.type || '1',
-        sensors: b.sensors.map(s => ({
-          name: s.name,
-          deviceType: s.sheetType || s.deviceType || '其他' // Use sheetType as primary category
-        }))
+        type: b.type || '1'
       }));
 
       const res = await fetch('/api/devices/status', {
@@ -91,45 +86,9 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
       if (!res.ok) throw new Error('Failed to fetch status');
       const data = await res.json();
       
-      // Post-process data to aggregate stats based on our local sheet types
-      const processedData = data.map((d: any) => {
-        const structure = bridges.find(b => b.id === d.id);
-        if (!structure) return d;
-        
-        const types: Record<string, { total: number; online: number }> = {};
-        const deviceMap = d.deviceMap || {};
-        
-        // Iterate through OUR known sensors for this structure to calculate stats
-        structure.sensors.forEach(sensor => {
-          const type = sensor.sheetType || sensor.deviceType || '其他';
-          if (!types[type]) types[type] = { total: 0, online: 0 };
-          
-          types[type].total++;
-          
-          // Check status in the returned deviceMap
-          // The map keys are sensor names
-          const status = deviceMap[sensor.name];
-          if (status && status.status === 'online') {
-            types[type].online++;
-          }
-        });
-        
-        const total = Object.values(types).reduce((acc, t) => acc + t.total, 0);
-        const online = Object.values(types).reduce((acc, t) => acc + t.online, 0);
-        
-        return {
-          ...d,
-          stats: {
-            total,
-            online,
-            types
-          }
-        };
-      });
-
-      setDeviceStatuses(processedData);
+      setDeviceStatuses(data);
       setStatusLastUpdated(new Date().toLocaleString());
-      return processedData;
+      return data;
     } catch (err) {
       console.error('Failed to refresh device status', err);
       alert('获取设备状态失败: ' + (err instanceof Error ? err.message : 'Unknown error'));
@@ -150,9 +109,8 @@ export function Dashboard({ bridges, importLogs = [], onClear, onBack }: Dashboa
     Math.ceil(totalWords / 500) + 
     Math.ceil(totalCharts / 4);
   
-  // Collect all unique device types from the bridges (which come from Excel sheets)
   const deviceTypeColumns = Array.from(new Set(
-    bridges.flatMap(b => b.sensors.map(s => s.sheetType || s.deviceType || '其他'))
+    deviceStatuses.flatMap(d => Object.keys(d?.stats?.types || {}))
   )).filter(Boolean).sort();
 
   const formatRate = (online?: number, total?: number) => {

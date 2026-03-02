@@ -169,23 +169,27 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
           );
           
           // Create a table for device status
+          const statuses = deviceStatuses || [];
+          const allTypes = Array.from(
+            new Set(
+              statuses.flatMap((s) => Object.keys(s?.stats?.types || {}))
+            )
+          ).filter(Boolean).sort();
+
           const tableRows = [
             new TableRow({
               children: [
                 new TableCell({ children: [new Paragraph({ text: "结构名称", bold: true })] }),
-                new TableCell({ children: [new Paragraph({ text: "倾角设备在线率", bold: true })] }),
-                new TableCell({ children: [new Paragraph({ text: "位移设备在线率", bold: true })] }),
-                new TableCell({ children: [new Paragraph({ text: "其他设备在线率", bold: true })] }),
+                ...allTypes.map((t) => new TableCell({ children: [new Paragraph({ text: `${t}在线率`, bold: true })] })),
                 new TableCell({ children: [new Paragraph({ text: "总在线率", bold: true })] }),
               ],
             }),
           ];
-          
-          const statuses = deviceStatuses || [];
+
           // Use bridges to ensure we list all structures even if status is missing
           bridges.forEach(bridge => {
              const status = statuses.find(s => s.id === bridge.id);
-             const stats = status?.stats || { total: 0, online: 0, types: { inclination: {total:0, online:0}, displacement: {total:0, online:0}, other: {total:0, online:0} } };
+             const stats = status?.stats || { total: 0, online: 0, types: {} };
              
              const formatRate = (online, total) => {
                 if (!total || total === 0) return '-';
@@ -196,9 +200,7 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                 new TableRow({
                   children: [
                     new TableCell({ children: [new Paragraph(bridge.name)] }),
-                    new TableCell({ children: [new Paragraph(formatRate(stats.types?.inclination?.online, stats.types?.inclination?.total))] }),
-                    new TableCell({ children: [new Paragraph(formatRate(stats.types?.displacement?.online, stats.types?.displacement?.total))] }),
-                    new TableCell({ children: [new Paragraph(formatRate(stats.types?.other?.online, stats.types?.other?.total))] }),
+                    ...allTypes.map((t) => new TableCell({ children: [new Paragraph(formatRate(stats.types?.[t]?.online, stats.types?.[t]?.total))] })),
                     new TableCell({ children: [new Paragraph(formatRate(stats.online, stats.total))] }),
                   ],
                 })
