@@ -55,3 +55,13 @@ export interface ReportTemplate {
   cover: ReportCover;
   sections: ReportSection[];
 }
+
+export interface LogEntry {
+  id: string;
+  name?: string;
+  type?: string;
+  status: 'success' | 'error' | 'info' | 'skipped';
+  msg: string;
+  downloadUrl?: string;
+  fromCache?: boolean;
+}

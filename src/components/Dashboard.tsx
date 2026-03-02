@@ -1,15 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BridgeData, ReportCover, ReportSection, ReportTemplate, SectionType } from '../types';
+import { BridgeData, ReportCover, ReportSection, ReportTemplate, SectionType, LogEntry } from '../types';
 import { SensorChart } from './SensorChart';
 import { CoverEditor } from './CoverEditor';
 import { TemplateEditor } from './TemplateEditor';
 import { SectionNavigator } from './SectionNavigator';
-import { FileDown, FileText, Activity, Trash2, LayoutTemplate, Loader2, ArrowLeft, ArrowDown, ArrowUp } from 'lucide-react';
+import { FileDown, FileText, Activity, Trash2, LayoutTemplate, Loader2, ArrowLeft, ArrowDown, ArrowUp, AlertTriangle, RefreshCw, Server, CheckCircle2, XCircle } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
 interface DashboardProps {
   bridges: BridgeData[];
+  importLogs?: LogEntry[];
   onClear: () => void;
   onBack?: () => void;
 }
@@ -35,15 +36,65 @@ const DEFAULT_TEMPLATE: ReportTemplate = {
   ]
 };
 
-export function Dashboard({ bridges, onClear, onBack }: DashboardProps) {
+export function Dashboard({ bridges, importLogs = [], onClear, onBack }: DashboardProps) {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<string>('');
   const [reportCover, setReportCover] = useState<ReportCover>({} as ReportCover);
   const [template, setTemplate] = useState<ReportTemplate>(DEFAULT_TEMPLATE);
   const [showTemplateEditor, setShowTemplateEditor] = useState(true);
   const [activeArea, setActiveArea] = useState<'editor' | 'preview'>('editor');
+  const [showImportErrors, setShowImportErrors] = useState(false);
+  
+  // Device Status State
+  const [deviceStatuses, setDeviceStatuses] = useState<any[]>([]);
+  const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
+  const [statusLastUpdated, setStatusLastUpdated] = useState<string | null>(null);
+
   const reportRef = useRef<HTMLDivElement>(null);
   const areaVisibilityRef = useRef<{ editor: number; preview: number }>({ editor: 0, preview: 0 });
+
+  // Calculate import stats
+  const importStats = {
+    total: importLogs.length,
+    success: importLogs.filter(l => l.status === 'success' || l.status === 'skipped').length,
+    failed: importLogs.filter(l => l.status === 'error').length,
+    failedLogs: importLogs.filter(l => l.status === 'error')
+  };
+
+  // Auto-show errors if there are failures and we just mounted
+  useEffect(() => {
+    if (importStats.failed > 0) {
+      setShowImportErrors(true);
+    }
+  }, []);
+
+  const refreshDeviceStatus = async () => {
+    setIsRefreshingStatus(true);
+    try {
+      // Map bridges to { id, name, type }
+      const structures = bridges.map(b => ({
+        id: b.id,
+        name: b.name,
+        type: b.type || '1'
+      }));
+
+      const res = await fetch('/api/devices/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ structures })
+      });
+      
+      if (!res.ok) throw new Error('Failed to fetch status');
+      const data = await res.json();
+      setDeviceStatuses(data);
+      setStatusLastUpdated(new Date().toLocaleString());
+    } catch (err) {
+      console.error('Failed to refresh device status', err);
+      alert('获取设备状态失败: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setIsRefreshingStatus(false);
+    }
+  };
 
   // Calculate report statistics
   const totalCharts = bridges.reduce((acc, bridge) => acc + bridge.sensors.length, 0);
@@ -263,6 +314,64 @@ export function Dashboard({ bridges, onClear, onBack }: DashboardProps) {
           </>
         )}
       </button>
+
+      {/* Data Integrity Dashboard */}
+      {importLogs.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Server className="w-5 h-5 text-gray-500" />
+              <h3 className="font-semibold text-gray-900">数据导入概览</h3>
+              <div className="flex gap-2">
+                <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  成功: {importStats.success}
+                </span>
+                {importStats.failed > 0 && (
+                  <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full font-medium flex items-center gap-1">
+                    <XCircle className="w-3 h-3" />
+                    失败: {importStats.failed}
+                  </span>
+                )}
+              </div>
+            </div>
+            {importStats.failed > 0 && (
+              <button
+                onClick={() => setShowImportErrors(!showImportErrors)}
+                className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+              >
+                {showImportErrors ? '收起详情' : '查看异常详情'}
+                {showImportErrors ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+              </button>
+            )}
+          </div>
+          
+          {showImportErrors && importStats.failed > 0 && (
+            <div className="p-4 bg-red-50/50 border-b border-red-100 max-h-60 overflow-y-auto">
+              <h4 className="text-sm font-semibold text-red-800 mb-3 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                异常结构列表 ({importStats.failed})
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {importStats.failedLogs.map((log) => (
+                  <div key={`${log.id}-${log.type}`} className="bg-white p-3 rounded border border-red-100 shadow-sm text-sm">
+                    <div className="flex justify-between items-start mb-1">
+                      <span className="font-medium text-gray-900">{log.name || log.id}</span>
+                      <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">
+                        {log.type === '1' ? '类型1' : log.type === '2' ? '类型2' : '类型3'}
+                      </span>
+                    </div>
+                    <div className="text-red-600 text-xs mt-1 break-words">
+                      原因: {log.msg}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-gray-100 sticky top-[64px] z-20">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">分析仪表盘</h2>
@@ -403,34 +512,72 @@ export function Dashboard({ bridges, onClear, onBack }: DashboardProps) {
                   )}
 
                   {section.type === 'device_status' && (
-                    <div className="border border-gray-200 rounded-lg overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">设备ID</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">设备名称</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最后更新时间</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {[1, 2, 3].map((i) => (
-                            <tr key={i}>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">DEV-{1000 + i}</td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">传感器-{i}</td>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                                  在线
-                                </span>
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">2026-02-28 10:00:00</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <div className="bg-gray-50 px-4 py-2 text-xs text-gray-400 text-center border-t border-gray-200">
-                        * 预览数据，实际导出时将调用接口: {section.apiUrl || '默认接口'}
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center print:hidden">
+                        <span className="text-sm text-gray-500">
+                          {statusLastUpdated ? `上次更新: ${statusLastUpdated}` : '点击右侧按钮获取最新状态'}
+                        </span>
+                        <button 
+                          onClick={refreshDeviceStatus}
+                          disabled={isRefreshingStatus}
+                          className="flex items-center gap-1.5 text-xs bg-white border border-gray-300 px-3 py-1.5 rounded hover:bg-gray-50 transition-colors disabled:opacity-50"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingStatus ? 'animate-spin' : ''}`} />
+                          {isRefreshingStatus ? '获取中...' : '更新设备状态'}
+                        </button>
                       </div>
+                      
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">设备ID</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">设备名称</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最后更新时间</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {deviceStatuses.length > 0 ? (
+                              deviceStatuses.map((device, idx) => (
+                                <tr key={device.id || idx}>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{device.id}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{device.name}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                      device.status === 'online' 
+                                        ? 'bg-green-100 text-green-800' 
+                                        : 'bg-red-100 text-red-800'
+                                    }`}>
+                                      {device.status === 'online' ? '在线' : '离线'}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{device.lastUpdate}</td>
+                                </tr>
+                              ))
+                            ) : (
+                              // Show placeholder if no data fetched yet
+                              [1, 2, 3].map((i) => (
+                                <tr key={i} className="opacity-50">
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">DEV-示例-{i}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">传感器-{i}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
+                                      待获取
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">-</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                      {deviceStatuses.length === 0 && (
+                        <div className="bg-yellow-50 px-4 py-2 text-xs text-yellow-700 text-center border-t border-yellow-100">
+                          * 当前显示为示例数据，请点击上方“更新设备状态”按钮获取实时数据
+                        </div>
+                      )}
                     </div>
                   )}
 

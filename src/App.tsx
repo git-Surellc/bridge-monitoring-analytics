@@ -22,6 +22,7 @@ export default function App() {
   const [importMode, setImportMode] = useState<'file' | 'api'>('file');
   
   const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'files'>('upload');
+  const [importLogs, setImportLogs] = useState<any[]>([]);
 
   const handleUpload = async (files: File[]) => {
     setIsLoading(true);
@@ -58,7 +59,16 @@ export default function App() {
       const uniqueNew = newBridges.filter(b => !existingIds.has(b.id));
       return [...prev, ...uniqueNew];
     });
+    // Don't switch immediately if we want to show progress, 
+    // but the current logic in ApiImporter handles the flow.
+    // We will let the user choose when to go to dashboard or it happens automatically.
+    // For now, keep existing behavior but we might want to change it 
+    // if we want to show the import logs in the dashboard.
     setCurrentView('dashboard');
+  };
+
+  const handleImportLogs = (logs: any[]) => {
+    setImportLogs(logs);
   };
 
   const handleBack = () => {
@@ -178,7 +188,7 @@ export default function App() {
                 {importMode === 'file' ? (
                   <UploadArea onUpload={handleUpload} />
                 ) : (
-                  <ApiImporter onImport={handleApiImport} />
+                  <ApiImporter onImport={handleApiImport} onLogUpdate={handleImportLogs} />
                 )}
                 
                 <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
@@ -202,7 +212,12 @@ export default function App() {
             )}
 
             {currentView === 'dashboard' && (
-              <Dashboard bridges={bridges} onClear={handleClear} onBack={handleBack} />
+              <Dashboard 
+                bridges={bridges} 
+                importLogs={importLogs}
+                onClear={handleClear} 
+                onBack={handleBack} 
+              />
             )}
 
             {currentView === 'files' && (

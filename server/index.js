@@ -33,8 +33,10 @@ app.post('/api/import/start', async (req, res) => {
   }
 
   try {
-    const cookie = req.headers.cookie;
-    startImportTask(month, structures, cookie);
+    const tokenRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('api_token');
+    const token = tokenRow ? tokenRow.value : null;
+    
+    startImportTask(month, structures, token);
     res.json({ message: 'Import task started', month });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -82,6 +84,160 @@ app.get('/api/files', (req, res) => {
   try {
     const files = db.prepare('SELECT * FROM imports ORDER BY created_at DESC').all();
     res.json(files);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Auth & Settings API
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and Password required' });
+
+  try {
+    // 1. Encrypt Password
+    const suffix = Math.floor(100000 + Math.random() * 900000);
+    const encryptUrl = `http://cdsd.seefar.com.cn/prod-api/getPw?password=${password}${suffix}`;
+    
+    const encryptRes = await fetch(encryptUrl);
+    if (!encryptRes.ok) throw new Error(`Encryption failed: ${encryptRes.status}`);
+    const encryptData = await encryptRes.json();
+    
+    if (encryptData.code !== 200) throw new Error(encryptData.msg || 'Encryption API error');
+    const encryptedPassword = encryptData.msg;
+
+    // 2. Login
+    const loginUrl = 'http://cdsd.seefar.com.cn/prod-api/login';
+    const loginRes = await fetch(loginUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password: encryptedPassword })
+    });
+
+    if (!loginRes.ok) throw new Error(`Login failed: ${loginRes.status}`);
+    const loginData = await loginRes.json();
+    
+    if (loginData.code !== 200) throw new Error(loginData.msg || 'Login API error');
+    const token = loginData.token;
+
+    // 3. Save to DB
+    const stmt = db.prepare('INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)');
+    stmt.run('api_token', token);
+    stmt.run('api_username', username);
+
+    res.json({ success: true, token });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/auth/status', (req, res) => {
+  try {
+    const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('api_token');
+    const userRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('api_username');
+    res.json({ 
+      hasToken: !!row,
+      username: userRow ? userRow.value : null
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Device Status API
+app.post('/api/devices/status', async (req, res) => {
+  const { structures } = req.body; // Expect array of { id, name, type }
+  
+  try {
+    const tokenRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('api_token');
+    if (!tokenRow) return res.status(401).json({ error: 'No API token found. Please login first.' });
+    const token = tokenRow.value;
+
+    const results = [];
+    const targetStructures = (structures && Array.isArray(structures)) ? structures : [];
+
+    for (const struct of targetStructures) {
+      try {
+        const url = new URL('http://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/sensorList');
+        url.searchParams.append('pageNum', '1');
+        url.searchParams.append('pageSize', '50');
+        url.searchParams.append('structureName', struct.name);
+        url.searchParams.append('structureType', struct.type || '1');
+        url.searchParams.append('pointName', '一体化倾角振动监测仪');
+        url.searchParams.append('status', '');
+
+        const response = await fetch(url.toString(), {
+          headers: { 'Authorization': token }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.code === 200 && data.records) {
+             const sensors = data.records;
+             let isOnline = false;
+             let hasAbnormal = false;
+             let latestTime = null;
+
+             for (const sensor of sensors) {
+                if (sensor.status !== '0') hasAbnormal = true;
+                if (sensor.lastOnlineTime) {
+                   const time = new Date(sensor.lastOnlineTime).getTime();
+                   if (!latestTime || time > latestTime) latestTime = time;
+                }
+             }
+
+             // Check if online (within 2 hours)
+             if (latestTime && (Date.now() - latestTime < 2 * 60 * 60 * 1000)) {
+                isOnline = true;
+             }
+
+             results.push({
+               id: struct.id,
+               name: struct.name,
+               status: isOnline ? (hasAbnormal ? 'warning' : 'online') : 'offline',
+               lastUpdate: latestTime ? new Date(latestTime).toLocaleString() : 'Never'
+             });
+          } else {
+             results.push({ id: struct.id, name: struct.name, status: 'offline', lastUpdate: '-' });
+          }
+        } else {
+           results.push({ id: struct.id, name: struct.name, status: 'error', lastUpdate: '-' });
+        }
+      } catch (err) {
+        console.error(`Failed to fetch status for ${struct.name}:`, err);
+        results.push({ id: struct.id, name: struct.name, status: 'error', lastUpdate: '-' });
+      }
+    }
+
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reports API
+app.get('/api/reports', (req, res) => {
+  try {
+    const reports = db.prepare('SELECT * FROM reports ORDER BY created_at DESC').all();
+    res.json(reports);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/reports/:id', (req, res) => {
+  const { id } = req.params;
+  try {
+    const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+
+    if (report.file_path && fs.existsSync(report.file_path)) {
+      fs.unlinkSync(report.file_path);
+    }
+    
+    db.prepare('DELETE FROM reports WHERE id = ?').run(id);
+    res.json({ message: 'Report deleted' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -174,7 +330,7 @@ app.delete('/api/admin/clear-database', (req, res) => {
 });
 
 // Report Generation Task Storage
-const reportTasks = new Map();
+// const reportTasks = new Map(); // Deprecated in favor of DB
 
 app.post('/api/reports/generate', async (req, res) => {
   try {
@@ -187,47 +343,32 @@ app.post('/api/reports/generate', async (req, res) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const fileName = `Report_${timestamp}_${taskId.slice(0, 8)}.docx`;
     const filePath = path.join(REPORT_DIR, fileName);
+    const reportName = (cover && cover.title) ? cover.title : `监测报告_${new Date().toLocaleDateString()}`;
 
-    // Initial status
-    reportTasks.set(taskId, { 
-      status: 'pending', 
-      progress: 0, 
-      startTime: Date.now() 
-    });
+    // 1. Insert into DB
+    const stmt = db.prepare('INSERT INTO reports (task_id, name, status, progress, file_path) VALUES (?, ?, ?, ?, ?)');
+    const result = stmt.run(taskId, reportName, 'pending', 0, filePath);
+    const reportId = result.lastInsertRowid;
 
     // Start background processing
     (async () => {
       try {
-        reportTasks.set(taskId, { status: 'processing', progress: 10 });
+        db.prepare('UPDATE reports SET status = ?, progress = ? WHERE id = ?').run('processing', 10, reportId);
         
         // Generate Report
         const buffer = await generateWordReport(bridges, cover, sections, (progress) => {
-           reportTasks.set(taskId, { 
-             status: 'processing', 
-             progress,
-             startTime: reportTasks.get(taskId)?.startTime 
-           });
+           db.prepare('UPDATE reports SET progress = ? WHERE id = ?').run(progress, reportId);
         });
         
         // Write to disk
         fs.writeFileSync(filePath, buffer);
         
         // Update status
-        reportTasks.set(taskId, { 
-          status: 'completed', 
-          progress: 100, 
-          downloadUrl: `/api/reports/download/${fileName}`,
-          fileName: fileName
-        });
-
-        // Cleanup task after 1 hour
-        setTimeout(() => {
-          reportTasks.delete(taskId);
-        }, 3600000);
+        db.prepare('UPDATE reports SET status = ?, progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('completed', 100, reportId);
 
       } catch (err) {
         console.error('Report generation failed:', err);
-        reportTasks.set(taskId, { status: 'failed', error: err.message });
+        db.prepare('UPDATE reports SET status = ?, error_msg = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('failed', err.message, reportId);
       }
     })();
 
@@ -238,9 +379,20 @@ app.post('/api/reports/generate', async (req, res) => {
 });
 
 app.get('/api/reports/task/:id', (req, res) => {
-  const task = reportTasks.get(req.params.id);
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-  res.json(task);
+  try {
+    const task = db.prepare('SELECT * FROM reports WHERE task_id = ?').get(req.params.id);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    
+    res.json({
+      status: task.status,
+      progress: task.progress,
+      downloadUrl: task.status === 'completed' ? `/api/reports/download/${path.basename(task.file_path)}` : null,
+      error: task.error_msg,
+      fileName: task.file_path ? path.basename(task.file_path) : 'unknown.docx'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.get('/api/reports/download/:filename', (req, res) => {
@@ -254,6 +406,8 @@ app.get('/api/reports/download/:filename', (req, res) => {
 
 // Serve storage files (for download)
 app.use('/storage', express.static(STORAGE_DIR));
+
+
 
 const DIST_DIR = path.join(__dirname, '../dist');
 if (fs.existsSync(DIST_DIR)) {

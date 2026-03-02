@@ -32,11 +32,19 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    month TEXT NOT NULL,
+    task_id TEXT,
+    name TEXT,
     status TEXT DEFAULT 'pending',
+    progress INTEGER DEFAULT 0,
     file_path TEXT,
     error_msg TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);

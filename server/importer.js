@@ -14,7 +14,7 @@ if (!fs.existsSync(EXCEL_DIR)) {
 // In-memory task tracking
 const activeTasks = new Map(); // month -> { status, progress, total, success, fail, logs: [] }
 
-export const startImportTask = (month, structures, cookie) => {
+export const startImportTask = (month, structures, token) => {
   if (activeTasks.has(month)) {
     const task = activeTasks.get(month);
     if (task.status === 'running') {
@@ -35,16 +35,16 @@ export const startImportTask = (month, structures, cookie) => {
   activeTasks.set(month, task);
 
   // Run async
-  processImport(month, structures, task, cookie);
+  processImport(month, structures, task, token);
 };
 
-async function processImport(month, structures, task, cookie) {
+async function processImport(month, structures, task, token) {
   try {
     for (const item of structures) {
       if (task.status === 'stopped') break;
 
       // Check DB using month + structure_id + structure_type
-  const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ? AND structure_type = ?').get(month, item.id, item.type);
+      const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ? AND structure_type = ?').get(month, item.id, item.type);
       
       if (existing && existing.status === 'success' && existing.file_path && fs.existsSync(existing.file_path)) {
         // Update metadata even if skipping download (to backfill names)
@@ -72,7 +72,7 @@ async function processImport(month, structures, task, cookie) {
         
         const headers = {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-          ...(cookie ? { 'Cookie': cookie } : {})
+          'Authorization': token || ''
         };
 
         const response = await fetch(url, { headers });

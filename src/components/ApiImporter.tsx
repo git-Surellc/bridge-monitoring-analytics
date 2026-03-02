@@ -1,23 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { BridgeData } from '../types';
+import { BridgeData, LogEntry } from '../types';
 import { parseExcelArrayBuffer } from '../utils/excel';
-import { Loader2, CheckCircle, AlertCircle, Play, FileInput, Bug, Download, ArrowRight } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Play, FileInput, Bug, Download, ArrowRight, Lock, Unlock, Key } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface ApiImporterProps {
   onImport: (data: BridgeData[]) => void;
+  onLogUpdate?: (logs: LogEntry[]) => void;
   className?: string;
-}
-
-interface LogEntry {
-  id: string;
-  name?: string;
-  type?: string;
-  status: 'success' | 'error' | 'info' | 'skipped';
-  msg: string;
-  downloadUrl?: string;
-  fromCache?: boolean;
 }
 
 interface StructureItem {
@@ -26,8 +17,15 @@ interface StructureItem {
   type: string; // "1" | "2" | "3"
 }
 
-export function ApiImporter({ onImport, className }: ApiImporterProps) {
+export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterProps) {
   const [isLoadingResults, setIsLoadingResults] = useState(false);
+
+  // Auth State
+  const [apiUsername, setApiUsername] = useState('');
+  const [apiPassword, setApiPassword] = useState('');
+  const [hasToken, setHasToken] = useState(false);
+  const [showAuthInput, setShowAuthInput] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
 
   const [month, setMonth] = useState(() => {
     // Try to recover from localStorage, otherwise default to current month
@@ -88,7 +86,18 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
     
     setIsLoadingResults(false);
   };
+
   useEffect(() => {
+    // Check auth status on mount
+    fetch('/api/auth/status')
+      .then(res => res.json())
+      .then(data => {
+        setHasToken(data.hasToken);
+        if (data.username) setApiUsername(data.username);
+        if (!data.hasToken) setShowAuthInput(true);
+      })
+      .catch(console.error);
+
     // Check for any global active task on mount
     const checkActive = async () => {
       try {
@@ -107,6 +116,30 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
     };
     checkActive();
   }, []);
+
+  const handleLogin = async () => {
+    if (!apiUsername || !apiPassword) {
+      alert('请输入用户名和密码');
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: apiUsername, password: apiPassword })
+      });
+      if (!res.ok) throw new Error('Auth failed');
+      setHasToken(true);
+      setShowAuthInput(false);
+      setApiPassword('');
+      alert('API授权成功');
+    } catch (err) {
+      alert('授权失败: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
   useEffect(() => {
     // Initial check
@@ -139,6 +172,9 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
         
         if (data.logs && Array.isArray(data.logs)) {
           setLogs(data.logs);
+          if (onLogUpdate) {
+            onLogUpdate(data.logs);
+          }
           
           // REMOVED AUTO-REDIRECT LOGIC per user request
           // Now user must manually click "Load Results and Analyze"
@@ -262,8 +298,70 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
           调试模式 {debugMode ? '已开启' : '已关闭'}
         </button>
       </div>
+
+      {/* Auth Section */}
+      <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+            <Key className="w-4 h-4 text-gray-500" />
+            API 授权配置
+          </h4>
+          <div className="flex items-center gap-2">
+            <span className={cn("text-xs px-2 py-1 rounded-full border", hasToken ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200")}>
+              {hasToken ? "已授权" : "未授权"}
+            </span>
+            {hasToken && !showAuthInput && (
+              <button 
+                onClick={() => setShowAuthInput(true)}
+                className="text-xs text-blue-600 hover:underline"
+              >
+                更新密码
+              </button>
+            )}
+          </div>
+        </div>
+
+        {showAuthInput && (
+          <div className="space-y-3">
+             <div className="grid grid-cols-1 gap-2">
+                <input 
+                  type="text"
+                  value={apiUsername}
+                  onChange={(e) => setApiUsername(e.target.value)}
+                  placeholder="请输入API用户名"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <input 
+                  type="password"
+                  value={apiPassword}
+                  onChange={(e) => setApiPassword(e.target.value)}
+                  placeholder="请输入API访问密码"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+             </div>
+             <div className="flex gap-2 justify-end">
+                {hasToken && (
+                  <button 
+                    onClick={() => setShowAuthInput(false)}
+                    className="px-3 py-2 text-gray-500 hover:bg-gray-200 rounded-lg text-sm"
+                  >
+                    取消
+                  </button>
+                )}
+                <button
+                  onClick={handleLogin}
+                  disabled={authLoading || !apiPassword || !apiUsername}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2 w-full justify-center"
+                >
+                  {authLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlock className="w-4 h-4" />}
+                  {hasToken ? "更新并重新获取Token" : "获取授权Token"}
+                </button>
+             </div>
+          </div>
+        )}
+      </div>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <div className={cn("grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 transition-opacity duration-300", !hasToken && "opacity-50 pointer-events-none")}>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">月份</label>
           <input 
