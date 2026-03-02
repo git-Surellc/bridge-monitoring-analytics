@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Lock, User, ArrowRight, Loader2, Cpu, Activity, Database, ShieldCheck } from 'lucide-react';
+import { Lock, User, ArrowRight, Loader2, Activity } from 'lucide-react';
 import { cn } from '../utils/cn';
+import { APP_VERSION, BUILD_DATE, BUILD_NUMBER } from '../version';
 
 interface LoginProps {
   onLogin: (token: string) => void;
@@ -25,8 +26,9 @@ export function Login({ onLogin }: LoginProps) {
     let height = canvas.height = window.innerHeight;
     
     const particles: { x: number; y: number; vx: number; vy: number; size: number; color: string }[] = [];
-    const particleCount = 100;
-    const colors = ['#3b82f6', '#06b6d4', '#8b5cf6', '#ffffff']; // Blue, Cyan, Violet, White
+    const particleCount = 80;
+    // Dark colors for light background: Slate-400, Blue-500, Cyan-600
+    const colors = ['#94a3b8', '#3b82f6', '#0891b2', '#64748b']; 
 
     for (let i = 0; i < particleCount; i++) {
       particles.push({
@@ -52,7 +54,8 @@ export function Login({ onLogin }: LoginProps) {
           
           if (distance < 150) {
             ctx.beginPath();
-            ctx.strokeStyle = `rgba(100, 116, 139, ${0.2 * (1 - distance / 150)})`;
+            // Darker lines for light background
+            ctx.strokeStyle = `rgba(100, 116, 139, ${0.15 * (1 - distance / 150)})`;
             ctx.moveTo(particles[i].x, particles[i].y);
             ctx.lineTo(particles[j].x, particles[j].y);
             ctx.stroke();
@@ -119,32 +122,32 @@ export function Login({ onLogin }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen w-full relative flex items-center justify-center overflow-hidden bg-slate-900 text-white">
+    <div className="min-h-screen w-full relative flex items-center justify-center overflow-hidden bg-[#fdfbf7] text-slate-800">
       {/* Background Canvas */}
       <canvas 
         ref={canvasRef} 
         className="absolute inset-0 z-0 pointer-events-none opacity-60"
       />
       
-      {/* Background Gradient Orbs */}
-      <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-blue-600/20 blur-[120px] animate-pulse"></div>
-      <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] rounded-full bg-cyan-600/20 blur-[120px] animate-pulse delay-1000"></div>
+      {/* Background Gradient Orbs - Light theme */}
+      <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-blue-100/50 blur-[100px] animate-pulse"></div>
+      <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] rounded-full bg-amber-100/50 blur-[100px] animate-pulse delay-1000"></div>
 
       {/* Login Card */}
       <div className="relative z-10 w-full max-w-md p-8 mx-4">
-        <div className="bg-slate-800/50 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl p-8 space-y-8 relative overflow-hidden group">
+        <div className="bg-white/80 backdrop-blur-xl border border-white/60 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] p-8 space-y-8 relative overflow-hidden group">
           
           {/* Decorative scanning line */}
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-blue-500 to-transparent opacity-50 group-hover:opacity-100 transition-opacity duration-1000"></div>
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-blue-500/20 to-transparent opacity-50 group-hover:opacity-100 transition-opacity duration-1000"></div>
           
           <div className="text-center space-y-2">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-400 mb-4 shadow-lg shadow-blue-500/30">
-              <Activity className="w-8 h-8 text-white" />
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-400 mb-4 shadow-lg shadow-blue-500/20 text-white">
+              <Activity className="w-8 h-8" />
             </div>
-            <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
+            <h1 className="text-3xl font-bold tracking-tight text-slate-800">
               结构监测数据分析系统
             </h1>
-            <p className="text-slate-400 text-sm">
+            <p className="text-slate-500 text-sm">
               Structural Monitoring Analytics System
             </p>
           </div>
@@ -152,7 +155,7 @@ export function Login({ onLogin }: LoginProps) {
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               <div className="relative group/input">
-                <div className="absolute left-3 top-3 text-slate-500 group-focus-within/input:text-blue-400 transition-colors">
+                <div className="absolute left-3 top-3.5 text-slate-400 group-focus-within/input:text-blue-500 transition-colors">
                   <User className="w-5 h-5" />
                 </div>
                 <input
@@ -160,13 +163,13 @@ export function Login({ onLogin }: LoginProps) {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="用户名 / Username"
-                  className="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-10 pr-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:bg-white transition-all"
                   required
                 />
               </div>
 
               <div className="relative group/input">
-                <div className="absolute left-3 top-3 text-slate-500 group-focus-within/input:text-blue-400 transition-colors">
+                <div className="absolute left-3 top-3.5 text-slate-400 group-focus-within/input:text-blue-500 transition-colors">
                   <Lock className="w-5 h-5" />
                 </div>
                 <input
@@ -174,14 +177,14 @@ export function Login({ onLogin }: LoginProps) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="密码 / Password"
-                  className="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-10 pr-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:bg-white transition-all"
                   required
                 />
               </div>
             </div>
 
             {error && (
-              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center animate-in fade-in slide-in-from-top-2">
+              <div className="p-3 rounded-lg bg-red-50 border border-red-100 text-red-600 text-sm text-center animate-in fade-in slide-in-from-top-2">
                 {error}
               </div>
             )}
@@ -189,7 +192,7 @@ export function Login({ onLogin }: LoginProps) {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full group relative flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white py-3 rounded-xl font-medium transition-all shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-[1.02] disabled:opacity-70 disabled:hover:scale-100"
+              className="w-full group relative flex items-center justify-center gap-2 bg-gradient-to-r from-slate-800 to-slate-700 hover:from-slate-700 hover:to-slate-600 text-white py-3 rounded-xl font-medium transition-all shadow-lg shadow-slate-500/20 hover:shadow-slate-500/30 hover:scale-[1.02] disabled:opacity-70 disabled:hover:scale-100"
             >
               {isLoading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -202,21 +205,14 @@ export function Login({ onLogin }: LoginProps) {
             </button>
           </form>
 
-          <div className="pt-6 border-t border-slate-700/50 flex justify-between items-center text-xs text-slate-500">
-            <div className="flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3" />
-              <span>Secure Access</span>
+          <div className="pt-4 border-t border-slate-100 text-center">
+            <div className="text-xs text-slate-400 font-mono">
+               v{APP_VERSION} ({BUILD_DATE} v{BUILD_NUMBER})
             </div>
-            <div className="flex items-center gap-1">
-              <Database className="w-3 h-3" />
-              <span>v8.0 System</span>
+            <div className="mt-1 text-[10px] text-slate-300 italic font-medium">
+               By Surellc
             </div>
           </div>
-        </div>
-        
-        <div className="text-center mt-8 text-slate-600 text-xs">
-           &copy; 2026 Bridge Monitoring Analytics. All rights reserved. <br/>
-           <span className="opacity-50">Powered by Trae</span>
         </div>
       </div>
     </div>
