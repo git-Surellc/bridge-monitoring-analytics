@@ -38,6 +38,7 @@ export function FileManager() {
   const [fixing, setFixing] = useState(false);
   const [fixResult, setFixResult] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<number[]>([]);
 
   // Word Reports State
   const [reports, setReports] = useState<ReportTask[]>([]);
@@ -193,6 +194,49 @@ export function FileManager() {
     return matchMonth && matchName;
   });
 
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedFiles(filteredFiles.map(f => f.id));
+    } else {
+      setSelectedFiles([]);
+    }
+  };
+
+  const handleSelectOne = (id: number, checked: boolean) => {
+    if (checked) {
+      setSelectedFiles(prev => [...prev, id]);
+    } else {
+      setSelectedFiles(prev => prev.filter(fid => fid !== id));
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedFiles.length === 0) return;
+    if (!confirm(`确定要删除选中的 ${selectedFiles.length} 个文件吗？此操作不可恢复。`)) return;
+
+    try {
+      const res = await fetch('/api/files/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedFiles })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Batch delete failed');
+
+      setFiles(files.filter(f => !selectedFiles.includes(f.id)));
+      setSelectedFiles([]);
+      
+      if (data.errors && data.errors.length > 0) {
+        alert(`部分删除失败:\n${data.errors.join('\n')}`);
+      } else {
+        // Optional: toast success
+      }
+    } catch (err) {
+      alert('批量删除失败: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+  };
+
   if (loading && activeTab === 'excel') return <div className="p-8 text-center text-gray-500">加载中...</div>;
 
   return (
@@ -261,6 +305,16 @@ export function FileManager() {
              </div>
   
              <div className="flex gap-2">
+               {selectedFiles.length > 0 && (
+                 <button
+                   onClick={handleBatchDelete}
+                   className="px-3 py-1.5 text-sm bg-red-600 text-white hover:bg-red-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                   title="批量删除选中文件"
+                 >
+                   <Trash2 className="w-4 h-4" />
+                   删除选中 ({selectedFiles.length})
+                 </button>
+               )}
                <button 
                 onClick={fetchFiles}
                 className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -308,6 +362,14 @@ export function FileManager() {
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-gray-700 uppercase bg-gray-50 border-b">
               <tr>
+                <th className="px-6 py-3 font-medium w-4">
+                  <input 
+                    type="checkbox" 
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    checked={filteredFiles.length > 0 && selectedFiles.length === filteredFiles.length}
+                    onChange={(e) => handleSelectAll(e.target.checked)}
+                  />
+                </th>
                 <th className="px-6 py-3 font-medium">ID</th>
                 <th className="px-6 py-3 font-medium">月份</th>
                 <th className="px-6 py-3 font-medium">结构名称 (ID)</th>
@@ -320,13 +382,21 @@ export function FileManager() {
             <tbody>
               {filteredFiles.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
                     没有找到相关文件
                   </td>
                 </tr>
               ) : (
                 filteredFiles.map((file) => (
-                  <tr key={file.id} className="bg-white border-b hover:bg-gray-50 transition-colors">
+                  <tr key={file.id} className={cn("bg-white border-b hover:bg-gray-50 transition-colors", selectedFiles.includes(file.id) && "bg-blue-50")}>
+                    <td className="px-6 py-4">
+                      <input 
+                        type="checkbox" 
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        checked={selectedFiles.includes(file.id)}
+                        onChange={(e) => handleSelectOne(file.id, e.target.checked)}
+                      />
+                    </td>
                     <td className="px-6 py-4 text-gray-500 font-mono">#{file.id}</td>
                     <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
                       {file.month}

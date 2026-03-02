@@ -13,9 +13,13 @@ import { parseExcelFile } from './utils/excel';
 import { LayoutDashboard, Loader2, FileUp, Globe, Database, LineChart } from 'lucide-react';
 import { cn } from './utils/cn';
 
+import { Login } from './components/Login';
 import { APP_VERSION, BUILD_DATE, BUILD_NUMBER } from './version';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return !!localStorage.getItem('auth_token');
+  });
   const [bridges, setBridges] = useState<BridgeData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +79,15 @@ export default function App() {
     setCurrentView('upload');
   };
 
+  const handleLogin = (token: string) => {
+    localStorage.setItem('auth_token', token);
+    setIsAuthenticated(true);
+  };
+
+  if (!isAuthenticated) {
+    return <Login onLogin={handleLogin} />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
       {/* Header */}
@@ -123,8 +136,13 @@ export default function App() {
               <Database className="w-4 h-4" />
               文件管理
             </button>
-            <div className="text-sm text-gray-500 font-mono">
-              v{APP_VERSION} ({BUILD_DATE} {BUILD_NUMBER})
+            <div className="flex flex-col items-end">
+              <div className="text-sm text-gray-500 font-mono">
+                v{APP_VERSION} ({BUILD_DATE} v{BUILD_NUMBER})
+              </div>
+              <div className="mt-0.5 px-2 py-0.5 bg-gradient-to-r from-blue-500 to-purple-500 text-white text-[10px] italic rounded transform -skew-x-12 shadow-sm font-semibold tracking-wide">
+                By Surellc
+              </div>
             </div>
           </div>
         </div>

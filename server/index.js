@@ -91,7 +91,64 @@ app.post('/api/import/retry', async (req, res) => {
   }
 });
 
+// Login Endpoint
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
+  
+  // Hardcoded credentials as requested (admin / Admin123)
+  // In a real production app, use bcrypt and a database
+  if (username === 'admin' && password === 'Admin123') {
+    // Return a simple token (could be JWT in future)
+    res.json({ token: 'valid-session-token-' + Date.now() });
+  } else {
+    res.status(401).json({ error: '用户名或密码错误' });
+  }
+});
+
 // File Management APIs
+app.post('/api/files/batch-delete', (req, res) => {
+  const { ids } = req.body;
+  if (!ids || !Array.isArray(ids)) {
+    return res.status(400).json({ error: 'Invalid IDs' });
+  }
+
+  let successCount = 0;
+  let errors = [];
+
+  const deleteStmt = db.prepare('DELETE FROM imports WHERE id = ?');
+  const getStmt = db.prepare('SELECT file_path FROM imports WHERE id = ?');
+
+  const transaction = db.transaction((fileIds) => {
+    for (const id of fileIds) {
+      try {
+        const file = getStmt.get(id);
+        if (file) {
+          // Delete physical file if exists
+          const filePath = path.isAbsolute(file.file_path) 
+            ? file.file_path 
+            : path.join(__dirname, '..', file.file_path);
+            
+          if (fs.existsSync(filePath)) {
+             fs.unlinkSync(filePath);
+          }
+          
+          deleteStmt.run(id);
+          successCount++;
+        }
+      } catch (err) {
+        errors.push(`Failed to delete ID ${id}: ${err.message}`);
+      }
+    }
+  });
+
+  try {
+    transaction(ids);
+    res.json({ success: true, count: successCount, errors: errors.length > 0 ? errors : undefined });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/files', (req, res) => {
   try {
     const files = db.prepare('SELECT * FROM imports ORDER BY created_at DESC').all();
