@@ -13,6 +13,7 @@ interface ApiImporterProps {
 interface LogEntry {
   id: string;
   name?: string;
+  type?: string;
   status: 'success' | 'error' | 'info' | 'skipped';
   msg: string;
   downloadUrl?: string;
@@ -51,11 +52,14 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
   // Helper to parse logs
   const processLogs = async (newLogs: LogEntry[]) => {
     for (const log of newLogs) {
+      // Use composite key for uniqueness check
+      const uniqueKey = `${log.id}-${log.type || '1'}`;
+
       // If success and has downloadUrl, and NOT processed yet
-      if ((log.status === 'success' || log.status === 'skipped') && log.downloadUrl && !processedIdsRef.current.has(log.id)) {
+      if ((log.status === 'success' || log.status === 'skipped') && log.downloadUrl && !processedIdsRef.current.has(uniqueKey)) {
         try {
           // Mark as processing to avoid race conditions
-          processedIdsRef.current.add(log.id);
+          processedIdsRef.current.add(uniqueKey);
 
           const fileRes = await fetch(log.downloadUrl);
           if (!fileRes.ok) throw new Error('Download failed');
@@ -63,11 +67,12 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
           const blob = await fileRes.arrayBuffer();
           
           // Use name from log if available, else find in structureList, else use ID
-          const name = log.name || structureList.find(s => s.id === log.id)?.name || log.id;
+          const name = log.name || structureList.find(s => s.id === log.id && s.type === log.type)?.name || log.id;
           
           const parsedData = await parseExcelArrayBuffer(blob, name);
           parsedData.id = log.id;
           parsedData.name = name;
+          parsedData.type = log.type;
           
           // Update parent
           onImport([parsedData]);
@@ -76,7 +81,7 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
           console.error(`Failed to parse ${log.id}`, e);
           // Allow retry by removing from set? 
           // Maybe not automatically. User can click retry if needed.
-          processedIdsRef.current.delete(log.id);
+          processedIdsRef.current.delete(uniqueKey);
         }
       }
     }
@@ -135,13 +140,8 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
         if (data.logs && Array.isArray(data.logs)) {
           setLogs(data.logs);
           
-          // CRITICAL FIX: Only auto-import (which triggers navigation) if:
-          // 1. Task is currently running
-          // 2. Task JUST finished (wasProcessing = true)
-          // 3. User manually started it (isProcessing = true)
-          if (data.status === 'running' || wasProcessing) {
-             processLogs(data.logs);
-          }
+          // REMOVED AUTO-REDIRECT LOGIC per user request
+          // Now user must manually click "Load Results and Analyze"
         }
       } else {
         setIsProcessing(false);

@@ -24,7 +24,11 @@ db.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_imports_month_structure ON imports (month, structure_id);
+  -- Drop old unique index if exists (we will replace it)
+  DROP INDEX IF EXISTS idx_imports_month_structure;
+
+  -- Create new unique index including structure_type
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_imports_month_structure_type ON imports (month, structure_id, structure_type);
 
   CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

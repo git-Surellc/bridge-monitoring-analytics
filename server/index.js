@@ -150,6 +150,27 @@ app.post('/api/admin/fix-filenames', (req, res) => {
   }
 });
 
+// Admin: Clear All Database
+app.delete('/api/admin/clear-database', (req, res) => {
+  try {
+    // 1. Delete all records from imports table
+    db.prepare('DELETE FROM imports').run();
+
+    // 2. Delete all files in excel directory
+    const files = fs.readdirSync(EXCEL_DIR);
+    for (const file of files) {
+      fs.unlinkSync(path.join(EXCEL_DIR, file));
+    }
+    
+    // 3. Reset auto-increment (optional but good for clean slate)
+    db.prepare("DELETE FROM sqlite_sequence WHERE name='imports'").run();
+
+    res.json({ message: 'Database cleared and all files deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Serve storage files (for download)
 app.use('/storage', express.static(STORAGE_DIR));
 

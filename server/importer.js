@@ -43,8 +43,8 @@ async function processImport(month, structures, task, cookie) {
     for (const item of structures) {
       if (task.status === 'stopped') break;
 
-      // Check DB
-      const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ?').get(month, item.id);
+      // Check DB using month + structure_id + structure_type
+  const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ? AND structure_type = ?').get(month, item.id, item.type);
       
       if (existing && existing.status === 'success' && existing.file_path && fs.existsSync(existing.file_path)) {
         // Update metadata even if skipping download (to backfill names)
@@ -57,6 +57,7 @@ async function processImport(month, structures, task, cookie) {
         task.progress++;
         task.logs.push({ 
           id: item.id, 
+          type: item.type,
           status: 'skipped', 
           msg: `已存在 (无需请求): ${item.name}`,
           fromCache: true,
@@ -124,11 +125,11 @@ async function processImport(month, structures, task, cookie) {
         }
 
         task.success++;
-        task.logs.push({ id: item.id, name: item.name, status: 'success', msg: `下载成功: ${item.name}`, downloadUrl });
+        task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'success', msg: `下载成功: ${item.name}`, downloadUrl });
 
       } catch (err) {
         task.fail++;
-        task.logs.push({ id: item.id, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}` });
+        task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}` });
         
         // Record error in DB
         if (existing) {

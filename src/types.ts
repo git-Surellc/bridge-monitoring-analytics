@@ -21,6 +21,7 @@ export interface SensorData {
 export interface BridgeData {
   id: string;
   name: string;
+  type?: string;
   sensors: SensorData[];
 }
 
