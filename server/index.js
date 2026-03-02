@@ -61,6 +61,80 @@ app.post('/api/import/retry', async (req, res) => {
   }
 });
 
+// File Management APIs
+app.get('/api/files', (req, res) => {
+  try {
+    const files = db.prepare('SELECT * FROM imports ORDER BY created_at DESC').all();
+    res.json(files);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/files/:id', (req, res) => {
+  const { id } = req.params;
+  try {
+    const file = db.prepare('SELECT * FROM imports WHERE id = ?').get(id);
+    if (!file) return res.status(404).json({ error: 'File not found' });
+
+    // Delete from disk
+    if (file.file_path && fs.existsSync(file.file_path)) {
+      fs.unlinkSync(file.file_path);
+    }
+
+    // Delete from DB
+    db.prepare('DELETE FROM imports WHERE id = ?').run(id);
+    
+    res.json({ message: 'File deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Admin: Fix Filenames (Migration)
+app.post('/api/admin/fix-filenames', (req, res) => {
+  try {
+    const rows = db.prepare("SELECT * FROM imports WHERE status = 'success' AND file_path IS NOT NULL").all();
+    let updatedCount = 0;
+    let errors = [];
+
+    for (const row of rows) {
+      if (!fs.existsSync(row.file_path)) {
+        errors.push(`File not found for ID ${row.id}: ${row.file_path}`);
+        continue;
+      }
+
+      const dir = path.dirname(row.file_path);
+      const ext = path.extname(row.file_path);
+      
+      // New filename format: StructureName_Month_ID.xlsx
+      // Sanitize filename to remove invalid characters
+      const safeName = (row.structure_name || 'Unknown').replace(/[\/\\:*?"<>|]/g, '_');
+      const newFileName = `${safeName}_${row.month}_${row.structure_id}${ext}`;
+      const newFilePath = path.join(dir, newFileName);
+
+      // Skip if name is already correct
+      if (path.basename(row.file_path) === newFileName) continue;
+
+      try {
+        fs.renameSync(row.file_path, newFilePath);
+        db.prepare('UPDATE imports SET file_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(newFilePath, row.id);
+        updatedCount++;
+      } catch (err) {
+        errors.push(`Failed to rename ID ${row.id}: ${err.message}`);
+      }
+    }
+
+    res.json({ 
+      message: `Processed ${rows.length} files. Updated ${updatedCount} filenames.`,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Serve storage files (for download)
 app.use('/storage', express.static(STORAGE_DIR));
 

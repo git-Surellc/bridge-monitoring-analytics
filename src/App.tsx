@@ -7,9 +7,10 @@ import React, { useState } from 'react';
 import { UploadArea } from './components/UploadArea';
 import { ApiImporter } from './components/ApiImporter';
 import { Dashboard } from './components/Dashboard';
+import { FileManager } from './components/FileManager';
 import { BridgeData } from './types';
 import { parseExcelFile } from './utils/excel';
-import { LayoutDashboard, Loader2, FileUp, Globe } from 'lucide-react';
+import { LayoutDashboard, Loader2, FileUp, Globe, Database } from 'lucide-react';
 import { cn } from './utils/cn';
 
 import { APP_VERSION, BUILD_DATE, BUILD_NUMBER } from './version';
@@ -19,8 +20,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importMode, setImportMode] = useState<'file' | 'api'>('file');
-
-  const [showDashboard, setShowDashboard] = useState(false);
+  
+  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'files'>('upload');
 
   const handleUpload = async (files: File[]) => {
     setIsLoading(true);
@@ -36,7 +37,7 @@ export default function App() {
         const uniqueNew = newBridges.filter(b => !existingIds.has(b.id));
         return [...prev, ...uniqueNew];
       });
-      setShowDashboard(true);
+      setCurrentView('dashboard');
     } catch (err) {
       console.error(err);
       setError('解析文件失败，请确保上传的是有效的 Excel 文件。');
@@ -48,7 +49,7 @@ export default function App() {
   const handleClear = () => {
     setBridges([]);
     setError(null);
-    setShowDashboard(false);
+    setCurrentView('upload');
   };
 
   const handleApiImport = (newBridges: BridgeData[]) => {
@@ -57,11 +58,11 @@ export default function App() {
       const uniqueNew = newBridges.filter(b => !existingIds.has(b.id));
       return [...prev, ...uniqueNew];
     });
-    setShowDashboard(true);
+    setCurrentView('dashboard');
   };
 
   const handleBack = () => {
-    setShowDashboard(false);
+    setCurrentView('upload');
   };
 
   return (
@@ -77,8 +78,20 @@ export default function App() {
               桥梁监测<span className="text-blue-600">分析系统</span>
             </h1>
           </div>
-          <div className="text-sm text-gray-500 font-mono">
-            v{APP_VERSION} ({BUILD_DATE} {BUILD_NUMBER})
+          <div className="flex items-center gap-6">
+            <button 
+              onClick={() => setCurrentView('files')}
+              className={cn(
+                "flex items-center gap-2 text-sm font-medium transition-colors",
+                currentView === 'files' ? "text-blue-600" : "text-gray-600 hover:text-gray-900"
+              )}
+            >
+              <Database className="w-4 h-4" />
+              文件管理
+            </button>
+            <div className="text-sm text-gray-500 font-mono">
+              v{APP_VERSION} ({BUILD_DATE} {BUILD_NUMBER})
+            </div>
           </div>
         </div>
       </header>
@@ -98,72 +111,88 @@ export default function App() {
           </div>
         ) : (
           <>
-            <div className={cn(showDashboard ? "hidden" : "block", "max-w-2xl mx-auto mt-20")}>
-              <div className="text-center mb-10">
-                <h2 className="text-3xl font-bold text-gray-900 mb-4">
-                  开始您的分析
-                </h2>
-                <p className="text-lg text-gray-600">
-                  上传桥梁传感器数据（Excel），即刻生成时程曲线可视化报告，支持导出 Word 和 PDF。
-                </p>
-              </div>
+            {currentView === 'upload' && (
+              <div className="max-w-2xl mx-auto mt-20">
+                <div className="text-center mb-10">
+                  <h2 className="text-3xl font-bold text-gray-900 mb-4">
+                    开始您的分析
+                  </h2>
+                  <p className="text-lg text-gray-600">
+                    上传桥梁传感器数据（Excel），即刻生成时程曲线可视化报告，支持导出 Word 和 PDF。
+                  </p>
+                </div>
 
-              <div className="flex justify-center mb-8">
-                <div className="bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm inline-flex gap-1">
-                  <button 
-                    onClick={() => setImportMode('file')}
-                    className={cn(
-                      "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200", 
-                      importMode === 'file' 
-                        ? "bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-100" 
-                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                    )}
-                  >
-                    <FileUp className="w-4 h-4" />
-                    文件上传
-                  </button>
-                  <button 
-                    onClick={() => setImportMode('api')}
-                    className={cn(
-                      "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200", 
-                      importMode === 'api' 
-                        ? "bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-100" 
-                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                    )}
-                  >
-                    <Globe className="w-4 h-4" />
-                    API 批量导入
-                  </button>
+                <div className="flex justify-center mb-8">
+                  <div className="bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm inline-flex gap-1">
+                    <button 
+                      onClick={() => setImportMode('file')}
+                      className={cn(
+                        "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200", 
+                        importMode === 'file' 
+                          ? "bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-100" 
+                          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                      )}
+                    >
+                      <FileUp className="w-4 h-4" />
+                      文件上传
+                    </button>
+                    <button 
+                      onClick={() => setImportMode('api')}
+                      className={cn(
+                        "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200", 
+                        importMode === 'api' 
+                          ? "bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-100" 
+                          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                      )}
+                    >
+                      <Globe className="w-4 h-4" />
+                      API 批量导入
+                    </button>
+                  </div>
+                </div>
+
+                {importMode === 'file' ? (
+                  <UploadArea onUpload={handleUpload} />
+                ) : (
+                  <ApiImporter onImport={handleApiImport} />
+                )}
+                
+                <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
+                  <div className="p-4">
+                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">1</div>
+                    <h3 className="font-medium text-gray-900">上传数据</h3>
+                    <p className="text-sm text-gray-500 mt-1">拖拽或点击上传 Excel 文件</p>
+                  </div>
+                  <div className="p-4">
+                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">2</div>
+                    <h3 className="font-medium text-gray-900">可视化分析</h3>
+                    <p className="text-sm text-gray-500 mt-1">自动绘制时程曲线图</p>
+                  </div>
+                  <div className="p-4">
+                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">3</div>
+                    <h3 className="font-medium text-gray-900">导出报告</h3>
+                    <p className="text-sm text-gray-500 mt-1">一键生成 Word/PDF 报告</p>
+                  </div>
                 </div>
               </div>
+            )}
 
-              {importMode === 'file' ? (
-                <UploadArea onUpload={handleUpload} />
-              ) : (
-                <ApiImporter onImport={handleApiImport} />
-              )}
-              
-              <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
-                <div className="p-4">
-                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">1</div>
-                  <h3 className="font-medium text-gray-900">上传数据</h3>
-                  <p className="text-sm text-gray-500 mt-1">拖拽或点击上传 Excel 文件</p>
-                </div>
-                <div className="p-4">
-                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">2</div>
-                  <h3 className="font-medium text-gray-900">可视化分析</h3>
-                  <p className="text-sm text-gray-500 mt-1">自动绘制时程曲线图</p>
-                </div>
-                <div className="p-4">
-                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">3</div>
-                  <h3 className="font-medium text-gray-900">导出报告</h3>
-                  <p className="text-sm text-gray-500 mt-1">一键生成 Word/PDF 报告</p>
-                </div>
-              </div>
-            </div>
-
-            {showDashboard && (
+            {currentView === 'dashboard' && (
               <Dashboard bridges={bridges} onClear={handleClear} onBack={handleBack} />
+            )}
+
+            {currentView === 'files' && (
+              <div className="max-w-6xl mx-auto">
+                <div className="mb-6">
+                  <button 
+                    onClick={() => setCurrentView('upload')} 
+                    className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 transition-colors"
+                  >
+                    ← 返回首页
+                  </button>
+                </div>
+                <FileManager />
+              </div>
             )}
           </>
         )}

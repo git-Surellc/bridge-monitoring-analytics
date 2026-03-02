@@ -101,7 +101,7 @@ async function processImport(month, structures, task, cookie) {
            }
         }
 
-        const fileName = `${month}_${item.id}_${item.name}.xlsx`;
+        const fileName = `${item.name}_${month}_${item.id}.xlsx`;
         const filePath = path.join(EXCEL_DIR, fileName);
         fs.writeFileSync(filePath, Buffer.from(buffer));
         
@@ -176,7 +176,7 @@ export const retryImport = async (month, structureId) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
         const buffer = await response.arrayBuffer();
-        const fileName = `${month}_${item.structure_id}_${item.structure_name}.xlsx`;
+        const fileName = `${item.structure_name}_${month}_${item.structure_id}.xlsx`;
         const filePath = path.join(EXCEL_DIR, fileName);
         fs.writeFileSync(filePath, Buffer.from(buffer));
 
