@@ -106,6 +106,11 @@ export function FileManager() {
         </div>
       </div>
 
+      <div className="bg-blue-50 px-6 py-2 text-xs text-blue-700 border-b border-blue-100 flex items-center gap-2">
+        <AlertCircle className="w-3.5 h-3.5" />
+        提示：如果现有文件缺少结构名称（显示 Unknown），请重新运行导入任务（无需下载）来更新数据库信息，然后再执行批量重命名。
+      </div>
+
       {error && (
         <div className="p-4 bg-red-50 text-red-700 border-b border-red-200 flex items-center gap-2">
           <AlertCircle className="w-5 h-5" />

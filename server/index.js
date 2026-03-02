@@ -110,7 +110,8 @@ app.post('/api/admin/fix-filenames', (req, res) => {
       // New filename format: StructureName_Month_ID.xlsx
       // Sanitize filename to remove invalid characters
       const safeName = (row.structure_name || 'Unknown').replace(/[\/\\:*?"<>|]/g, '_');
-      const newFileName = `${safeName}_${row.month}_${row.structure_id}${ext}`;
+      const month = row.month || '2024-02'; // Default to Feb 2024 if missing
+      const newFileName = `${safeName}_${month}_${row.structure_id}${ext}`;
       const newFilePath = path.join(dir, newFileName);
 
       // Skip if name is already correct

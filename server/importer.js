@@ -47,6 +47,10 @@ async function processImport(month, structures, task, cookie) {
       const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ?').get(month, item.id);
       
       if (existing && existing.status === 'success' && existing.file_path && fs.existsSync(existing.file_path)) {
+        // Update metadata even if skipping download (to backfill names)
+        db.prepare('UPDATE imports SET structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(item.name, item.type, existing.id);
+
         task.success++;
         task.progress++;
         task.logs.push({ 
@@ -109,8 +113,8 @@ async function processImport(month, structures, task, cookie) {
 
         // Update DB
         if (existing) {
-          db.prepare('UPDATE imports SET status = ?, file_path = ?, updated_at = CURRENT_TIMESTAMP, error_msg = NULL WHERE id = ?')
-            .run('success', filePath, existing.id);
+          db.prepare('UPDATE imports SET status = ?, file_path = ?, structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP, error_msg = NULL WHERE id = ?')
+            .run('success', filePath, item.name, item.type, existing.id);
         } else {
           db.prepare('INSERT INTO imports (month, structure_id, structure_name, structure_type, status, file_path) VALUES (?, ?, ?, ?, ?, ?)')
             .run(month, item.id, item.name, item.type, 'success', filePath);
@@ -125,8 +129,8 @@ async function processImport(month, structures, task, cookie) {
         
         // Record error in DB
         if (existing) {
-          db.prepare('UPDATE imports SET status = ?, error_msg = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-            .run('error', err.message, existing.id);
+          db.prepare('UPDATE imports SET status = ?, error_msg = ?, structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .run('error', err.message, item.name, item.type, existing.id);
         } else {
           db.prepare('INSERT INTO imports (month, structure_id, structure_name, structure_type, status, error_msg) VALUES (?, ?, ?, ?, ?, ?)')
             .run(month, item.id, item.name, item.type, 'error', err.message);
