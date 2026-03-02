@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import db from './db.js';
 import fs from 'fs';
-import { startImportTask, getImportStatus, retryImport } from './importer.js';
+import { startImportTask, getImportStatus, retryImport, getActiveTask } from './importer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -34,6 +34,20 @@ app.post('/api/import/start', async (req, res) => {
     const cookie = req.headers.cookie;
     startImportTask(month, structures, cookie);
     res.json({ message: 'Import task started', month });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get active task
+app.get('/api/import/active', (req, res) => {
+  try {
+    const task = getActiveTask();
+    if (task) {
+      res.json(task);
+    } else {
+      res.status(404).json({ message: 'No active task' });
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

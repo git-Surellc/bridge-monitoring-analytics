@@ -147,6 +147,15 @@ async function processImport(month, structures, task, cookie) {
   }
 };
 
+export const getActiveTask = () => {
+  for (const [month, task] of activeTasks.entries()) {
+    if (task.status === 'running') {
+      return { month, ...task };
+    }
+  }
+  return null;
+};
+
 export const getImportStatus = (month) => {
   const task = activeTasks.get(month);
   if (task) return task;

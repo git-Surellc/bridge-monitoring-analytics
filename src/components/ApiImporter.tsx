@@ -38,6 +38,25 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
 
   // Check for existing task on mount and periodically
   useEffect(() => {
+    // Check for any global active task on mount
+    const checkActive = async () => {
+      try {
+        const res = await fetch('/api/import/active');
+        if (res.ok) {
+          const task = await res.json();
+          if (task.month && task.month !== month) {
+            setMonth(task.month);
+            // The polling effect will take over from here due to month dependency
+          }
+        }
+      } catch (e) {
+        console.error('Failed to check active task', e);
+      }
+    };
+    checkActive();
+  }, []);
+
+  useEffect(() => {
     // Initial check
     checkStatus();
     

@@ -10,7 +10,7 @@ import { Dashboard } from './components/Dashboard';
 import { FileManager } from './components/FileManager';
 import { BridgeData } from './types';
 import { parseExcelFile } from './utils/excel';
-import { LayoutDashboard, Loader2, FileUp, Globe, Database } from 'lucide-react';
+import { LayoutDashboard, Loader2, FileUp, Globe, Database, LineChart } from 'lucide-react';
 import { cn } from './utils/cn';
 
 import { APP_VERSION, BUILD_DATE, BUILD_NUMBER } from './version';
@@ -79,6 +79,30 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-6">
+            <button 
+              onClick={() => setCurrentView('upload')}
+              className={cn(
+                "flex items-center gap-2 text-sm font-medium transition-colors",
+                currentView === 'upload' ? "text-blue-600" : "text-gray-600 hover:text-gray-900"
+              )}
+            >
+              <FileUp className="w-4 h-4" />
+              数据导入
+            </button>
+
+            {bridges.length > 0 && (
+              <button 
+                onClick={() => setCurrentView('dashboard')}
+                className={cn(
+                  "flex items-center gap-2 text-sm font-medium transition-colors",
+                  currentView === 'dashboard' ? "text-blue-600" : "text-gray-600 hover:text-gray-900"
+                )}
+              >
+                <LineChart className="w-4 h-4" />
+                分析报表
+              </button>
+            )}
+
             <button 
               onClick={() => setCurrentView('files')}
               className={cn(
@@ -160,18 +184,18 @@ export default function App() {
                 <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
                   <div className="p-4">
                     <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">1</div>
-                    <h3 className="font-medium text-gray-900">上传数据</h3>
-                    <p className="text-sm text-gray-500 mt-1">拖拽或点击上传 Excel 文件</p>
+                    <h3 className="font-medium text-gray-900">数据接入</h3>
+                    <p className="text-sm text-gray-500 mt-1">支持 Excel 文件上传或通过 API 自动同步数据</p>
                   </div>
                   <div className="p-4">
                     <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">2</div>
-                    <h3 className="font-medium text-gray-900">可视化分析</h3>
-                    <p className="text-sm text-gray-500 mt-1">自动绘制时程曲线图</p>
+                    <h3 className="font-medium text-gray-900">数据管理</h3>
+                    <p className="text-sm text-gray-500 mt-1">在线管理数据库文件，支持批量重命名与清洗</p>
                   </div>
                   <div className="p-4">
                     <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600 font-bold">3</div>
-                    <h3 className="font-medium text-gray-900">导出报告</h3>
-                    <p className="text-sm text-gray-500 mt-1">一键生成 Word/PDF 报告</p>
+                    <h3 className="font-medium text-gray-900">分析报告</h3>
+                    <p className="text-sm text-gray-500 mt-1">自动生成可视化图表，一键导出 Word/PDF 报告</p>
                   </div>
                 </div>
               </div>
