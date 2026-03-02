@@ -304,14 +304,33 @@ export function ApiImporter({ onImport, className }: ApiImporterProps) {
         </div>
       )}
 
-      <button
-        onClick={handleImport}
-        disabled={isProcessing || structureList.length === 0}
-        className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-        {isProcessing ? '后台导入进行中...' : '开始批量导入'}
-      </button>
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          onClick={handleImport}
+          disabled={isProcessing || structureList.length === 0}
+          className={cn(
+            "flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+            !isProcessing && logs.some(l => l.status === 'success' || l.status === 'skipped') ? "col-span-1" : "col-span-2"
+          )}
+        >
+          {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+          {isProcessing ? '后台导入进行中...' : '开始批量导入'}
+        </button>
+
+        {!isProcessing && logs.some(l => l.status === 'success' || l.status === 'skipped') && (
+          <button
+            onClick={() => {
+               // Reset processed IDs to force re-processing
+               processedIdsRef.current.clear();
+               processLogs(logs);
+            }}
+            className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg font-medium transition-colors col-span-1"
+          >
+            <ArrowRight className="w-4 h-4" />
+            加载结果并分析
+          </button>
+        )}
+      </div>
 
       {/* Progress & Logs */}
       {(isProcessing || logs.length > 0) && (
