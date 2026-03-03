@@ -20,9 +20,10 @@ interface AnalysisToolbarProps {
   hasAiConfig: boolean;
   onAiAnalyze?: () => void;
   isAiAnalyzing?: boolean;
+  onAiStop?: () => void;
 }
 
-export function AnalysisToolbar({ config, onChange, availableTypes, hasAiConfig, onAiAnalyze, isAiAnalyzing }: AnalysisToolbarProps) {
+export function AnalysisToolbar({ config, onChange, availableTypes, hasAiConfig, onAiAnalyze, isAiAnalyzing, onAiStop }: AnalysisToolbarProps) {
   if (!config.enableGlobal) {
     return (
       <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 sticky top-16 z-10 shadow-sm">
@@ -91,6 +92,15 @@ export function AnalysisToolbar({ config, onChange, availableTypes, hasAiConfig,
                     批量智能分析
                   </>
                 )}
+              </button>
+            )}
+            {config.enableAi && isAiAnalyzing && onAiStop && (
+              <button
+                onClick={onAiStop}
+                className="ml-2 px-3 py-1.5 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-full shadow-sm flex items-center gap-1.5 transition-all"
+                title="停止当前批量分析"
+              >
+                停止
               </button>
             )}
           </div>

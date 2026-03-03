@@ -1,6 +1,6 @@
 import React from 'react';
 import { ReportSection, SectionType } from '../types';
-import { FileText, Activity, Server, List, Plus } from 'lucide-react';
+import { FileText, Activity, Server, List, Plus, BookmarkCheck } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface SectionNavigatorProps {
@@ -19,6 +19,7 @@ const SECTION_ICONS: Record<SectionType, React.ReactNode> = {
   chart_analysis: <Activity className="w-4 h-4" />,
   device_status: <Server className="w-4 h-4" />,
   toc: <List className="w-4 h-4" />,
+  conclusion: <BookmarkCheck className="w-4 h-4" />,
 };
 
 const ADD_SECTION_ITEMS: { type: SectionType; label: string; icon: React.ReactNode }[] = [
@@ -26,6 +27,7 @@ const ADD_SECTION_ITEMS: { type: SectionType; label: string; icon: React.ReactNo
   { type: 'chart_analysis', label: '监测分析', icon: <Activity className="w-4 h-4" /> },
   { type: 'device_status', label: '设备状态', icon: <Server className="w-4 h-4" /> },
   { type: 'toc', label: '目录', icon: <List className="w-4 h-4" /> },
+  { type: 'conclusion', label: '评估结论', icon: <BookmarkCheck className="w-4 h-4" /> },
 ];
 
 export function SectionNavigator({ sections, onSectionClick, onAddSection, stats }: SectionNavigatorProps) {

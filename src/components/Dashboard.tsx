@@ -298,6 +298,23 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
     }
   };
 
+  const handleStopAiAnalysis = async () => {
+    try {
+      const id = aiBatchId || localStorage.getItem('ai_batch_id');
+      if (id) {
+        await fetch('/api/ai/batch/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchId: id })
+        }).catch(() => {});
+      }
+    } finally {
+      localStorage.removeItem('ai_batch_id');
+      setAiBatchId(null);
+      setIsAiLoading({});
+    }
+  };
+
   // Compute Available Types for Toolbar
   const availableTypes = React.useMemo(() => {
     const types = new Set<string>();
@@ -725,6 +742,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
           hasAiConfig={hasAiConfig}
           onAiAnalyze={() => handleRunAiAnalysis()}
           isAiAnalyzing={Object.values(isAiLoading).some(v => v)}
+          onAiStop={() => handleStopAiAnalysis()}
         />
       </div>
 

@@ -65,11 +65,11 @@ export function AiConfig({ onBack }: AiConfigProps) {
             type="text"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://api.openai.com/v1"
+            placeholder="https://dashscope.aliyuncs.com/compatible/v1 或 https://bailian-openai.cn-beijing.aliyuncs.com/v1"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
           />
           <p className="text-xs text-gray-500 mt-1">
-            请输入兼容 OpenAI 接口格式的 API 地址
+            请输入兼容 OpenAI 接口格式的 API 地址（支持阿里云百炼 DashScope 兼容端点和 Bailian-OpenAI 端点）
           </p>
         </div>
 
@@ -163,13 +163,14 @@ export function AiConfig({ onBack }: AiConfigProps) {
             <option value="qwen-max" />
             <option value="gpt-4o" />
             <option value="deepseek-chat" />
+            <option value="qwen-2.5-coder-32b-instruct" />
           </datalist>
           <p className="text-xs text-gray-500 mt-1 space-y-1">
             <span className="block">请输入您要使用的模型名称（如 qwen-turbo, qwen-plus, gpt-4o 等）</span>
             <span className="block text-blue-600">
               * 阿里云百炼用户:
               <br/>- 通用: qwen-turbo, qwen-plus, qwen-max
-              <br/>- Coding: qwen-2.5-coder-32b-instruct 等 (请查阅文档)
+              <br/>- Coding: qwen-2.5-coder-32b-instruct 等（Coding Plan 端点: https://coding.dashscope.aliyuncs.com/v1）
             </span>
           </p>
         </div>

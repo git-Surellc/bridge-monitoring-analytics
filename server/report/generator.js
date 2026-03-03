@@ -1,6 +1,30 @@
 import { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, PageBreak, TableOfContents } from 'docx';
 import * as echarts from 'echarts';
 import { createCanvas } from 'canvas';
+import { format } from 'date-fns';
+
+// Helper to identify sensor type
+const KEYWORDS = {
+  INCLINATION: ['倾角', 'inclination', 'tilt'],
+  DISPLACEMENT: ['竖向位移', '沉降', 'displacement', 'settlement'],
+  ACCELERATION: ['加速度', 'acceleration'],
+  TEMPERATURE: ['温度', 'temperature'],
+  CRACK: ['裂缝', 'crack'],
+};
+
+const getSensorType = (sensor) => {
+  const name = (sensor.name || '').toLowerCase();
+  const sheetType = (sensor.sheetType || '').toLowerCase();
+  const text = `${name} ${sheetType}`;
+
+  if (KEYWORDS.INCLINATION.some(k => text.includes(k))) return 'inclination';
+  if (KEYWORDS.DISPLACEMENT.some(k => text.includes(k))) return 'displacement';
+  if (KEYWORDS.ACCELERATION.some(k => text.includes(k))) return 'acceleration';
+  if (KEYWORDS.TEMPERATURE.some(k => text.includes(k))) return 'temperature';
+  if (KEYWORDS.CRACK.some(k => text.includes(k))) return 'crack';
+  
+  return null;
+};
 
 // Helper to format sensor title (ported from frontend)
 const formatSensorTitle = (name) => {
@@ -13,8 +37,40 @@ const formatSensorTitle = (name) => {
   return name;
 };
 
+// Helper to calculate linear regression
+const calculateLinearRegression = (points) => {
+  if (points.length <= 1) return null;
+
+  const n = points.length;
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const x = points[i][0];
+    const y = points[i][1];
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  }
+  
+  const denominator = n * sumXX - sumX * sumX;
+  if (denominator === 0) return null;
+
+  const slope = (n * sumXY - sumX * sumY) / denominator;
+  const intercept = (sumY - slope * sumX) / n;
+  
+  const equation = `y = ${slope.toFixed(4)}x ${intercept >= 0 ? '+' : ''}${intercept.toFixed(4)}`;
+
+  return { slope, intercept, equation };
+};
+
 // Generate chart image using ECharts
-const generateChartImage = (sensor) => {
+export const generateChartImage = (sensor) => {
+  if (!sensor.data || sensor.data.length === 0) {
+    console.warn(`[Chart] No data for sensor: ${sensor.name}`);
+    return null;
+  }
+
   const width = 800;
   const height = 400;
   const canvas = createCanvas(width, height);
@@ -26,6 +82,29 @@ const generateChartImage = (sensor) => {
   const times = sensor.data.map(d => d.time);
   const values = sensor.data.map(d => d.value);
   
+  // Calculate Trend Line (Linear Regression)
+  let trendData = [];
+  if (times.length > 1) {
+    const n = times.length;
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+    
+    // Normalize time to start from 0 to avoid large number precision issues
+    const startTime = times[0];
+    const x = times.map(t => t - startTime);
+    
+    for (let i = 0; i < n; i++) {
+      sumX += x[i];
+      sumY += values[i];
+      sumXY += x[i] * values[i];
+      sumXX += x[i] * x[i];
+    }
+    
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+    
+    trendData = x.map((xi, i) => [times[i], slope * xi + intercept]);
+  }
+
   const option = {
     animation: false,
     title: {
@@ -39,9 +118,17 @@ const generateChartImage = (sensor) => {
       data: times,
       axisLabel: {
         formatter: (value) => {
+           // Excel date format (number > 40000)
+           if (typeof value === 'number' && value > 40000 && value < 60000) {
+             const date = new Date((value - 25569) * 86400 * 1000);
+             return format(date, 'MM-dd');
+           }
            // Simple date formatting if string looks like date
            if (typeof value === 'string' && value.includes('T')) {
              return value.split('T')[0];
+           }
+           if (typeof value === 'string' && !isNaN(Date.parse(value))) {
+             return format(new Date(value), 'MM-dd');
            }
            return value;
         },
@@ -53,17 +140,122 @@ const generateChartImage = (sensor) => {
       type: 'value',
       scale: true // auto scale
     },
-    series: [{
-      data: values,
-      type: 'line',
-      smooth: true,
-      symbol: 'none', // no dots for performance
-      lineStyle: { width: 2, color: '#2563eb' }
-    }]
+    series: [
+      {
+        name: '监测值',
+        data: values,
+        type: 'line',
+        smooth: true,
+        symbol: 'none', // no dots for performance
+        lineStyle: { width: 2, color: '#2563eb' }
+      },
+      // Trend Line
+      ...(trendData.length > 0 ? [{
+        name: '趋势项',
+        data: trendData,
+        type: 'line',
+        smooth: false,
+        symbol: 'none',
+        lineStyle: { width: 2, color: '#dc2626', type: 'dashed', opacity: 0.7 }
+      }] : [])
+    ],
+    legend: {
+      data: ['监测值', '趋势项'],
+      top: 30
+    }
   };
   
   chart.setOption(option);
   
+  return canvas.toBuffer('image/png');
+};
+
+export const generateCorrelationChartImage = (tempSensor, defSensor) => {
+  const width = 800;
+  const height = 400;
+  const canvas = createCanvas(width, height);
+  const chart = echarts.init(canvas);
+
+  // Match data points
+  const points = [];
+  const tempMap = new Map();
+  tempSensor.data.forEach(d => tempMap.set(String(d.time), d.value));
+
+  defSensor.data.forEach(d => {
+    const timeStr = String(d.time);
+    if (tempMap.has(timeStr)) {
+      points.push([tempMap.get(timeStr), d.value]);
+    }
+  });
+
+  if (points.length === 0) return null;
+
+  // Calculate Linear Regression for Correlation Trend Line
+  let trendData = [];
+  let equation = '';
+  
+  const regression = calculateLinearRegression(points);
+  
+  if (regression) {
+    const { slope, intercept, equation: eq } = regression;
+    equation = eq;
+    
+    // Generate line points (min X and max X)
+    const xValues = points.map(p => p[0]);
+    const minX = Math.min(...xValues);
+    const maxX = Math.max(...xValues);
+    
+    trendData = [
+      [minX, slope * minX + intercept],
+      [maxX, slope * maxX + intercept]
+    ];
+  }
+
+  const option = {
+    animation: false,
+    title: {
+      text: '温度-变形相关性分析',
+      subtext: equation ? `拟合方程: ${equation}` : '',
+      left: 'center',
+      textStyle: { fontSize: 16 }
+    },
+    grid: { top: 60, bottom: 40, left: 50, right: 30 },
+    legend: {
+      data: ['观测数据', '拟合曲线'],
+      top: 30
+    },
+    xAxis: {
+      type: 'value',
+      name: '温度 (°C)',
+      nameLocation: 'middle',
+      nameGap: 25,
+      scale: true
+    },
+    yAxis: {
+      type: 'value',
+      name: '变形 (mm)',
+      scale: true
+    },
+    series: [
+      {
+        name: '观测数据',
+        type: 'scatter',
+        data: points,
+        symbolSize: 6,
+        itemStyle: { color: '#7c3aed' } // Purple color
+      },
+      // Regression Line
+      ...(trendData.length > 0 ? [{
+        name: '拟合曲线',
+        type: 'line',
+        data: trendData,
+        showSymbol: false,
+        lineStyle: { width: 2, color: '#dc2626', type: 'dashed' }
+      }] : [])
+    ]
+  };
+
+  chart.setOption(option);
   return canvas.toBuffer('image/png');
 };
 
@@ -241,30 +433,32 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
 
                  const imageBuffer = generateChartImage(sensor);
                  
-                 docChildren.push(
-                   new Paragraph({
-                     text: formatSensorTitle(sensor.name),
-                     heading: HeadingLevel.HEADING_3,
-                     spacing: { before: 150, after: 80 },
-                   })
-                 );
+                 if (imageBuffer) {
+                   docChildren.push(
+                     new Paragraph({
+                       text: formatSensorTitle(sensor.name),
+                       heading: HeadingLevel.HEADING_3,
+                       spacing: { before: 150, after: 80 },
+                     })
+                   );
 
-                 docChildren.push(
-                   new Paragraph({
-                     children: [
-                       new ImageRun({
-                         data: imageBuffer,
-                         transformation: { 
-                           width: 600, 
-                           height: 300 
-                         },
-                         type: 'png',
-                       }),
-                     ],
-                     alignment: AlignmentType.CENTER,
-                     spacing: { after: 200 },
-                   })
-                 );
+                   docChildren.push(
+                     new Paragraph({
+                       children: [
+                         new ImageRun({
+                           data: imageBuffer,
+                           transformation: { 
+                             width: 600, 
+                             height: 300 
+                           },
+                           type: 'png',
+                         }),
+                       ],
+                       alignment: AlignmentType.CENTER,
+                       spacing: { after: 200 },
+                     })
+                   );
+                 }
 
                  // Add Analysis Summary
                  if (sensor.stats) {
@@ -295,13 +489,17 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                         ],
                         spacing: { after: 50 },
                       }),
-                      new Paragraph({
-                        children: [
-                           new TextRun({ text: "平均值: ", bold: true }),
-                           new TextRun({ text: `${sensor.stats.mean}` }),
-                        ],
-                        spacing: { after: 200 },
-                      })
+                      ...(sensor.stats.mean !== undefined && sensor.stats.mean !== null && Number.isFinite(Number(sensor.stats.mean)) 
+                        ? [
+                          new Paragraph({
+                            children: [
+                               new TextRun({ text: "平均值: ", bold: true }),
+                               new TextRun({ text: `${sensor.stats.mean}` }),
+                            ],
+                            spacing: { after: 200 },
+                          })
+                        ] 
+                        : [])
                     );
                  }
                } catch (err) {
@@ -332,7 +530,56 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                        text: "温度-变形联动分析",
                        heading: HeadingLevel.HEADING_4,
                        spacing: { before: 150, after: 100 },
-                     }),
+                     })
+                   );
+
+                   // Add Correlation Chart and Analysis
+                   let equation = 'N/A';
+                   
+                   try {
+                      const tempSensor = bridge.sensors.find(s => getSensorType(s) === 'temperature');
+                      const defSensor = bridge.sensors.find(s => getSensorType(s) === 'displacement' || getSensorType(s) === 'inclination');
+                      
+                      if (tempSensor && defSensor) {
+                        // Calculate equation for text summary
+                        const points = [];
+                        const tempMap = new Map();
+                        tempSensor.data.forEach(d => tempMap.set(String(d.time), d.value));
+
+                        defSensor.data.forEach(d => {
+                          const timeStr = String(d.time);
+                          if (tempMap.has(timeStr)) {
+                            points.push([tempMap.get(timeStr), d.value]);
+                          }
+                        });
+
+                        const regression = calculateLinearRegression(points);
+                        if (regression) {
+                          equation = regression.equation;
+                        }
+
+                        const scatterBuffer = generateCorrelationChartImage(tempSensor, defSensor);
+                        if (scatterBuffer) {
+                          docChildren.push(
+                            new Paragraph({
+                              children: [
+                                new ImageRun({
+                                  data: scatterBuffer,
+                                  transformation: { width: 600, height: 300 },
+                                  type: 'png',
+                                }),
+                              ],
+                              alignment: AlignmentType.CENTER,
+                              spacing: { after: 200 },
+                            })
+                          );
+                        }
+                      }
+                   } catch (err) {
+                      console.error('Error generating correlation chart:', err);
+                   }
+
+                   docChildren.push(
                      new Paragraph({
                        children: [
                          new TextRun({ text: `相关系数 (Pearson): ${corr.correlation}`, bold: true }),
@@ -344,6 +591,12 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                        children: [
                          new TextRun({ text: `相关强度: ${corr.corrStrength}` }),
                          new TextRun({ text: `\t相关方向: ${corr.corrDirection}` }),
+                       ],
+                       spacing: { after: 50 },
+                     }),
+                     new Paragraph({
+                       children: [
+                         new TextRun({ text: `拟合方程: ${equation}`, bold: true }),
                        ],
                        spacing: { after: 200 },
                      })
@@ -388,7 +641,12 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                       const details = [];
 
                       if (quality) {
-                         details.push(new Paragraph({ text: `【数据质量】均值: ${quality.mean}, 缺失率: ${quality.missingRate}%, 异常点: ${quality.outlierCount}` }));
+                         const parts = [];
+                         if (quality.mean !== undefined && quality.mean !== null && Number.isFinite(Number(quality.mean))) {
+                           parts.push(`均值: ${quality.mean}`);
+                         }
+                         parts.push(`缺失率: ${quality.missingRate}%`, `异常点: ${quality.outlierCount}`);
+                         details.push(new Paragraph({ text: `【数据质量】${parts.join(', ')}` }));
                       }
                       if (trend) {
                          details.push(new Paragraph({ text: `【趋势分析】斜率: ${trend.slope}, R²: ${trend.rSquared}, 趋势: ${trend.trendDesc}` }));

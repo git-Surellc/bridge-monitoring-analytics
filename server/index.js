@@ -7,14 +7,29 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { generateWordReport } from './report/generator.js';
 import { startImportTask, getImportStatus, retryImport, getActiveTask, stopImportTask } from './importer.js';
-import { startBatchAnalysis, getBatchStatus } from './ai/service.js';
+import { startBatchAnalysis, getBatchStatus, stopBatchAnalysis } from './ai/service.js';
+import { globalErrorHandler, aiRateLimiter, uploadTimeout } from './middleware.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 8888;
 
 app.use(cors());
+// Apply timeout for all requests, but especially useful for uploads
+app.use((req, res, next) => {
+  // Default timeout 2 minutes
+  res.setTimeout(120000, () => {
+    if (!res.headersSent) {
+      res.status(408).send('Request Timeout');
+    }
+  });
+  next();
+});
+
 app.use(express.json({ limit: '50mb' }));
+
+// Apply Rate Limiting to AI routes
+app.use('/api/ai', aiRateLimiter);
 
 // Ensure storage directories exist
 const STORAGE_DIR = path.join(__dirname, '../storage');
@@ -349,6 +364,21 @@ app.get('/api/ai/batch/status/:batchId', (req, res) => {
     res.json(status);
   } catch (error) {
     console.error('Batch status error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Stop AI Batch
+app.post('/api/ai/batch/stop', (req, res) => {
+  try {
+    const { batchId } = req.body;
+    if (!batchId) {
+      return res.status(400).json({ error: 'batchId is required' });
+    }
+    const result = stopBatchAnalysis(batchId);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Batch stop error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -719,6 +749,9 @@ if (fs.existsSync(DIST_DIR)) {
     res.sendFile(path.join(DIST_DIR, 'index.html'));
   });
 }
+
+// Global Error Handler (must be last)
+app.use(globalErrorHandler);
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
