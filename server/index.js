@@ -214,6 +214,110 @@ app.get('/api/auth/status', (req, res) => {
   }
 });
 
+// AI Proxy API - List Models
+app.post('/api/ai/models', async (req, res) => {
+  let { baseUrl, apiKey } = req.body;
+  
+  if (!baseUrl || !apiKey) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+
+  baseUrl = baseUrl.trim();
+  apiKey = apiKey.trim();
+
+  // Normalize URL logic for models endpoint
+  let url = baseUrl.replace(/\/$/, '');
+  // Remove /chat/completions suffix if present to find base v1 url
+  url = url.replace(/\/chat\/completions$/, '');
+  
+  if (url.endsWith('/v1')) {
+    url += '/models';
+  } else {
+    url += '/v1/models';
+  }
+
+  console.log(`[AI Proxy] Fetching models from: ${url}`);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      }
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      // Try to parse error json if possible
+      try {
+        const errJson = JSON.parse(errText);
+        return res.status(response.status).json({ error: `AI Provider Error: ${JSON.stringify(errJson)}` });
+      } catch (e) {
+        return res.status(response.status).json({ error: `AI Provider Error: ${errText}` });
+      }
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('AI Proxy Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// AI Proxy API - Chat
+app.post('/api/ai/chat', async (req, res) => {
+  let { baseUrl, apiKey, messages, model } = req.body;
+  
+  if (!baseUrl || !apiKey || !messages) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+
+  baseUrl = baseUrl.trim();
+  apiKey = apiKey.trim();
+  model = (model || '').trim();
+
+  // Normalize URL logic
+  let url = baseUrl.replace(/\/$/, '');
+  if (url.endsWith('/chat/completions')) {
+    // Already has endpoint path, use as is
+  } else if (url.endsWith('/v1')) {
+    url += '/chat/completions';
+  } else {
+    url += '/v1/chat/completions';
+  }
+
+  console.log(`[AI Proxy] Forwarding request to: ${url}`);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model || 'qwen-turbo',
+        messages,
+        temperature: 0.7,
+        max_tokens: 500
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      return res.status(response.status).json({ error: `AI Provider Error: ${errText}` });
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('AI Proxy Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Device Status API
 app.post('/api/devices/status', async (req, res) => {
   const { structures } = req.body;

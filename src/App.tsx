@@ -10,9 +10,10 @@ import { Dashboard } from './components/Dashboard';
 import { FileManager } from './components/FileManager';
 import { StructureData } from './types';
 import { parseExcelFile } from './utils/excel';
-import { LayoutDashboard, Loader2, FileUp, Globe, Database, LineChart, BookOpen, CheckSquare, BarChart3, FileText } from 'lucide-react';
+import { LayoutDashboard, Loader2, FileUp, Globe, Database, LineChart, BookOpen, CheckSquare, BarChart3, FileText, Bot } from 'lucide-react';
 import { cn } from './utils/cn';
 
+import { AiConfig } from './components/AiConfig';
 import { Login } from './components/Login';
 import { APP_VERSION, BUILD_DATE, BUILD_NUMBER } from './version';
 
@@ -38,7 +39,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [importMode, setImportMode] = useState<'file' | 'api'>('file');
   
-  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'files'>('upload');
+  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'files' | 'ai-config'>('upload');
   const [importLogs, setImportLogs] = useState<any[]>([]);
 
   const handleUpload = async (files: File[]) => {
@@ -147,6 +148,17 @@ export default function App() {
             >
               <Database className="w-4 h-4" />
               文件管理
+            </button>
+
+            <button 
+              onClick={() => setCurrentView('ai-config')}
+              className={cn(
+                "flex items-center gap-2 text-sm font-medium transition-colors",
+                currentView === 'ai-config' ? "text-blue-600" : "text-gray-600 hover:text-gray-900"
+              )}
+            >
+              <Bot className="w-4 h-4" />
+              AI配置
             </button>
             <div className="flex flex-col items-end">
               <div className="text-sm text-gray-500 font-mono">
@@ -341,6 +353,10 @@ export default function App() {
                 </div>
                 <FileManager />
               </div>
+            )}
+
+            {currentView === 'ai-config' && (
+              <AiConfig onBack={() => setCurrentView('dashboard')} />
             )}
           </>
         )}

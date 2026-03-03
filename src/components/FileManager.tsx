@@ -360,7 +360,7 @@ export function FileManager() {
       <div className="overflow-x-auto flex-1">
         {activeTab === 'excel' ? (
           <table className="w-full text-sm text-left">
-            <thead className="text-xs text-gray-700 uppercase bg-gray-50 border-b">
+            <thead className="text-xs text-gray-700 uppercase bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="px-6 py-3 font-medium w-4">
                   <input 
@@ -379,7 +379,7 @@ export function FileManager() {
                 <th className="px-6 py-3 font-medium text-right">操作</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-100">
               {filteredFiles.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
@@ -388,7 +388,7 @@ export function FileManager() {
                 </tr>
               ) : (
                 filteredFiles.map((file) => (
-                  <tr key={file.id} className={cn("bg-white border-b hover:bg-gray-50 transition-colors", selectedFiles.includes(file.id) && "bg-blue-50")}>
+                  <tr key={file.id} className={cn("bg-white hover:bg-gray-50 transition-colors", selectedFiles.includes(file.id) && "bg-blue-50")}>
                     <td className="px-6 py-4">
                       <input 
                         type="checkbox" 
@@ -454,7 +454,7 @@ export function FileManager() {
           </table>
         ) : (
           <table className="w-full text-sm text-left">
-            <thead className="text-xs text-gray-700 uppercase bg-gray-50 border-b">
+            <thead className="text-xs text-gray-700 uppercase bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="px-6 py-3 font-medium">ID</th>
                 <th className="px-6 py-3 font-medium">报告名称</th>
@@ -463,7 +463,7 @@ export function FileManager() {
                 <th className="px-6 py-3 font-medium text-right">操作</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-100">
               {reports.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
@@ -472,7 +472,7 @@ export function FileManager() {
                 </tr>
               ) : (
                 reports.map((report) => (
-                  <tr key={report.id} className="bg-white border-b hover:bg-gray-50 transition-colors">
+                  <tr key={report.id} className="bg-white hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 text-gray-500 font-mono">#{report.id}</td>
                     <td className="px-6 py-4 font-medium text-gray-900">
                       <div className="flex items-center gap-2">
