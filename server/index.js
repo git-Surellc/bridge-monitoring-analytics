@@ -7,6 +7,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { generateWordReport } from './report/generator.js';
 import { startImportTask, getImportStatus, retryImport, getActiveTask, stopImportTask } from './importer.js';
+import { startBatchAnalysis, getBatchStatus } from './ai/service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -318,6 +319,40 @@ app.post('/api/ai/chat', async (req, res) => {
   }
 });
 
+// AI Batch Analysis API
+app.post('/api/ai/batch/start', (req, res) => {
+  try {
+    const { tasks, config } = req.body;
+    if (!tasks || !config || !Array.isArray(tasks)) {
+      return res.status(400).json({ error: 'Invalid parameters' });
+    }
+    
+    // Add validation for config
+    if (!config.baseUrl || !config.apiKey) {
+      return res.status(400).json({ error: 'Missing AI configuration' });
+    }
+
+    const batchId = startBatchAnalysis(tasks, config);
+    res.json({ batchId });
+  } catch (error) {
+    console.error('Batch start error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/ai/batch/status/:batchId', (req, res) => {
+  try {
+    const status = getBatchStatus(req.params.batchId);
+    if (!status) {
+      return res.status(404).json({ error: 'Batch not found' });
+    }
+    res.json(status);
+  } catch (error) {
+    console.error('Batch status error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Device Status API
 app.post('/api/devices/status', async (req, res) => {
   const { structures } = req.body;
@@ -327,7 +362,6 @@ app.post('/api/devices/status', async (req, res) => {
     if (!tokenRow) return res.status(401).json({ error: 'No API token found. Please login first.' });
     const token = tokenRow.value;
 
-    const results = [];
     const targetStructures = (structures && Array.isArray(structures)) ? structures : [];
 
     const normalizeDeviceType = (value) => {
@@ -357,20 +391,25 @@ app.post('/api/devices/status', async (req, res) => {
       return null;
     };
 
-    for (const struct of targetStructures) {
+    // Helper to fetch single structure status with timeout
+    const fetchStructureStatus = async (struct) => {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
         const url = new URL('http://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/sensorList');
         url.searchParams.append('pageNum', '1');
-        url.searchParams.append('pageSize', '100'); // Increased limit
+        url.searchParams.append('pageSize', '100'); 
         url.searchParams.append('structureName', struct.name);
         url.searchParams.append('structureType', struct.type || '1');
-        // Removed pointName filter to try to get all devices
-        // url.searchParams.append('pointName', '一体化倾角振动监测仪'); 
         url.searchParams.append('status', '');
 
         const response = await fetch(url.toString(), {
-          headers: { 'Authorization': token }
+          headers: { 'Authorization': token },
+          signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
 
         if (response.ok) {
           const data = await response.json();
@@ -422,7 +461,7 @@ app.post('/api/devices/status', async (req, res) => {
              const totalCount = Object.values(typeCounts).reduce((acc, v) => acc + (v?.total || 0), 0);
              const onlineCount = Object.values(typeCounts).reduce((acc, v) => acc + (v?.online || 0), 0);
 
-             results.push({
+             return {
                id: struct.id,
                name: struct.name,
                status: onlineCount > 0 ? (hasAbnormal ? 'warning' : 'online') : 'offline',
@@ -433,20 +472,24 @@ app.post('/api/devices/status', async (req, res) => {
                  online: onlineCount,
                  types: typeCounts
                }
-             });
-          } else {
-             results.push({ id: struct.id, name: struct.name, status: 'offline', lastUpdate: '-', stats: { total: 0, online: 0 } });
+             };
           }
-        } else {
-           results.push({ id: struct.id, name: struct.name, status: 'error', lastUpdate: '-', stats: { total: 0, online: 0 } });
         }
+        // Fallback for API error or empty data
+        return { id: struct.id, name: struct.name, status: 'offline', lastUpdate: '-', stats: { total: 0, online: 0 } };
       } catch (err) {
-        console.error(`Failed to fetch status for ${struct.name}:`, err);
-        results.push({ id: struct.id, name: struct.name, status: 'error', lastUpdate: '-', stats: { total: 0, online: 0 } });
+        console.error(`Failed to fetch status for ${struct.name}:`, err.name === 'AbortError' ? 'Timeout' : err.message);
+        return { id: struct.id, name: struct.name, status: 'error', lastUpdate: '-', stats: { total: 0, online: 0 } };
       }
-    }
+    };
 
+    // Parallel execution with Promise.all
+    // For large lists, we might want p-limit, but for now assuming < 50 structures, Promise.all is fine.
+    // If > 50, we should chunk it.
+    
+    const results = await Promise.all(targetStructures.map(fetchStructureStatus));
     res.json(results);
+
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

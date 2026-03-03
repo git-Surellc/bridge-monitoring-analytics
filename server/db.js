@@ -47,6 +47,20 @@ db.exec(`
     value TEXT,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS ai_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id TEXT NOT NULL,
+    structure_id TEXT NOT NULL,
+    structure_name TEXT,
+    prompt TEXT,
+    status TEXT DEFAULT 'pending', -- pending, processing, completed, failed
+    result TEXT,
+    error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_tasks_batch_id ON ai_tasks(batch_id);
 `);
 
 // Migration: Fix schema compatibility issues

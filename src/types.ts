@@ -41,7 +41,7 @@ export interface ReportCover {
   footerDate: string;
 }
 
-export type SectionType = 'text' | 'chart_analysis' | 'device_status' | 'toc';
+export type SectionType = 'text' | 'chart_analysis' | 'device_status' | 'toc' | 'conclusion';
 
 export interface ReportSection {
   id: string;

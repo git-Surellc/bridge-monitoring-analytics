@@ -10,7 +10,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { AnalysisToolbar } from './AnalysisToolbar';
 import { AnalysisResultView } from './AnalysisResultView';
-import { AnalysisConfig, analyzeStructure, analyzeWithAI, StructureAnalysisResult, getSensorType } from '../utils/analysis';
+import { AnalysisConfig, analyzeStructure, analyzeWithAI, StructureAnalysisResult, getSensorType, generateAiPrompt } from '../utils/analysis';
 
 interface DashboardProps {
   structures: StructureData[];
@@ -71,9 +71,13 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
     };
   });
   const [analysisResults, setAnalysisResults] = useState<Record<string, StructureAnalysisResult>>({});
-  const [aiResults, setAiResults] = useState<Record<string, string>>({});
+  const [aiResults, setAiResults] = useState<Record<string, string>>(() => {
+    const saved = localStorage.getItem('ai_results_cache');
+    return saved ? JSON.parse(saved) : {};
+  });
   const [isAiLoading, setIsAiLoading] = useState<Record<string, boolean>>({});
   const [hasAiConfig, setHasAiConfig] = useState(false);
+  const [aiBatchId, setAiBatchId] = useState<string | null>(null);
 
   const reportRef = useRef<HTMLDivElement>(null);
   const areaVisibilityRef = useRef<{ editor: number; preview: number }>({ editor: 0, preview: 0 });
@@ -158,6 +162,81 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
   }, [expandedAnalysisStructureId, analysisConfig.enableGlobal, analysisConfig.enableAi, hasAiConfig, structures]);
   */
 
+  // Restore AI Batch State on Mount
+  useEffect(() => {
+    const savedBatchId = localStorage.getItem('ai_batch_id');
+    if (savedBatchId) {
+      setAiBatchId(savedBatchId);
+    }
+  }, []);
+
+  // Poll AI Batch Status
+  useEffect(() => {
+    if (!aiBatchId) return;
+
+    let isMounted = true;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/ai/batch/status/${aiBatchId}`);
+        if (!res.ok) {
+          if (res.status === 404) {
+            // Batch not found (maybe server restarted), clear it
+            localStorage.removeItem('ai_batch_id');
+            if (isMounted) {
+              setAiBatchId(null);
+              setIsAiLoading({});
+            }
+          }
+          return;
+        }
+        const status = await res.json();
+        
+        if (!isMounted) return;
+
+        // Update aiResults
+        const newResults: Record<string, string> = {};
+        const newLoading: Record<string, boolean> = {};
+        
+        status.tasks.forEach((task: any) => {
+          if (task.status === 'completed' && task.result) {
+            newResults[task.id] = task.result;
+            newLoading[task.id] = false;
+          } else if (task.status === 'failed') {
+            newLoading[task.id] = false;
+            // Optionally show error in UI, but for now just stop loading
+          } else {
+            newLoading[task.id] = true;
+          }
+        });
+        
+        setAiResults(prev => {
+          const next = { ...prev, ...newResults };
+          localStorage.setItem('ai_results_cache', JSON.stringify(next));
+          return next;
+        });
+        
+        // Only update loading state if changed (to avoid too many re-renders)
+        setIsAiLoading(prev => ({ ...prev, ...newLoading }));
+
+        if (status.isComplete) {
+          localStorage.removeItem('ai_batch_id');
+          setAiBatchId(null);
+          setIsAiLoading({}); // Clear all loading
+        }
+      } catch (e) {
+        console.error('Poll error', e);
+      }
+    };
+
+    const interval = setInterval(poll, 2000);
+    poll(); // immediate run
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [aiBatchId]);
+
   const handleRunAiAnalysis = async (structureId?: string) => {
     if (!analysisConfig.enableGlobal || !analysisConfig.enableAi || !hasAiConfig) return;
     
@@ -172,28 +251,50 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
       ? structures.filter(s => s.id === structureId)
       : structures;
 
+    if (targetStructures.length === 0) return;
+
+    // Check if already running (simple check)
+    if (aiBatchId) {
+      const confirm = window.confirm('已有正在进行的 AI 分析任务，是否重新开始？');
+      if (!confirm) return;
+    }
+
     // Set loading state
     const loadingState: Record<string, boolean> = {};
     targetStructures.forEach(s => loadingState[s.id] = true);
     setIsAiLoading(prev => ({ ...prev, ...loadingState }));
 
     try {
-      // Process sequentially to avoid rate limits? Or parallel?
-      // Let's do parallel for now, user can control via batch size if needed later
-      await Promise.all(targetStructures.map(async (structure) => {
-        try {
-          const res = await analyzeWithAI(structure, aiConfig);
-          if (res) {
-            setAiResults(prev => ({ ...prev, [structure.id]: res }));
-          }
-        } catch (err) {
-          console.error(`AI Analysis failed for ${structure.name}:`, err);
-        } finally {
-          setIsAiLoading(prev => ({ ...prev, [structure.id]: false }));
-        }
+      // Prepare tasks
+      const tasks = targetStructures.map(s => ({
+        id: s.id,
+        name: s.name,
+        prompt: generateAiPrompt(s.name, s.sensors)
       }));
+
+      const res = await fetch('/api/ai/batch/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tasks, config: aiConfig })
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Failed to start batch');
+      }
+      
+      const { batchId } = await res.json();
+      setAiBatchId(batchId);
+      localStorage.setItem('ai_batch_id', batchId);
+
     } catch (err) {
       console.error('Batch AI Analysis failed:', err);
+      alert(`启动 AI 分析失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      setIsAiLoading(prev => {
+        const next = { ...prev };
+        targetStructures.forEach(s => delete next[s.id]);
+        return next;
+      });
     }
   };
 
@@ -226,11 +327,17 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
         type: b.type || '1'
       }));
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s frontend timeout
+
       const res = await fetch('/api/devices/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ structures: structureList })
+        body: JSON.stringify({ structures: structureList }),
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
       
       if (!res.ok) throw new Error('Failed to fetch status');
       const data = await res.json();
@@ -240,7 +347,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
       return data;
     } catch (err) {
       console.error('Failed to refresh device status', err);
-      alert('获取设备状态失败: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      // Don't alert during export to avoid blocking flow, just log
+      // alert('获取设备状态失败: ' + (err instanceof Error ? err.message : 'Unknown error'));
       return null;
     } finally {
       setIsRefreshingStatus(false);
