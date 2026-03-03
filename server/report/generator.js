@@ -1,7 +1,47 @@
 import { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, PageBreak, TableOfContents } from 'docx';
 import * as echarts from 'echarts';
-import { createCanvas } from 'canvas';
+import { createCanvas, registerFont } from 'canvas';
 import { format } from 'date-fns';
+import path from 'path';
+import fs from 'fs';
+
+// Try to register a font for Chinese support in ECharts
+// This is critical for Aliyun deployment where default fonts might be missing or not support Chinese
+const registerCustomFont = () => {
+  try {
+    // Check common font paths
+    const fontPaths = [
+      // Standard Linux font paths
+      '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+      '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+      '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+      // Common Windows/Mac font paths (for local dev)
+      '/System/Library/Fonts/PingFang.ttc',
+      'C:\\Windows\\Fonts\\msyh.ttc',
+      // Project local font (if we added one later)
+      path.join(process.cwd(), 'assets', 'fonts', 'SimHei.ttf')
+    ];
+
+    let fontLoaded = false;
+    for (const fontPath of fontPaths) {
+      if (fs.existsSync(fontPath)) {
+        console.log(`Registering font: ${fontPath}`);
+        registerFont(fontPath, { family: 'sans-serif' });
+        fontLoaded = true;
+        break;
+      }
+    }
+
+    if (!fontLoaded) {
+      console.warn('No Chinese font found. Charts might display squares for Chinese characters.');
+    }
+  } catch (err) {
+    console.error('Error registering font:', err);
+  }
+};
+
+// Register font on module load
+registerCustomFont();
 
 // Helper to identify sensor type
 const KEYWORDS = {
