@@ -753,6 +753,20 @@ if (fs.existsSync(DIST_DIR)) {
 // Global Error Handler (must be last)
 app.use(globalErrorHandler);
 
+// Cleanup stale tasks on startup
+try {
+  const staleReports = db.prepare("SELECT id FROM reports WHERE status = 'processing'").all();
+  if (staleReports.length > 0) {
+    console.log(`Found ${staleReports.length} stale report tasks. Marking as failed.`);
+    const updateStmt = db.prepare("UPDATE reports SET status = 'failed', error_msg = 'Server restarted during processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+    for (const report of staleReports) {
+      updateStmt.run(report.id);
+    }
+  }
+} catch (err) {
+  console.error('Failed to cleanup stale tasks:', err);
+}
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

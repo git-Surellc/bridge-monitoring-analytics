@@ -78,96 +78,102 @@ export const generateChartImage = (sensor) => {
   // ECharts initialization with canvas
   const chart = echarts.init(canvas);
   
-  // Prepare data
-  const times = sensor.data.map(d => d.time);
-  const values = sensor.data.map(d => d.value);
-  
-  // Calculate Trend Line (Linear Regression)
-  let trendData = [];
-  if (times.length > 1) {
-    const n = times.length;
-    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  try {
+    // Prepare data
+    const times = sensor.data.map(d => d.time);
+    const values = sensor.data.map(d => d.value);
     
-    // Normalize time to start from 0 to avoid large number precision issues
-    const startTime = times[0];
-    const x = times.map(t => t - startTime);
-    
-    for (let i = 0; i < n; i++) {
-      sumX += x[i];
-      sumY += values[i];
-      sumXY += x[i] * values[i];
-      sumXX += x[i] * x[i];
-    }
-    
-    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-    const intercept = (sumY - slope * sumX) / n;
-    
-    trendData = x.map((xi, i) => [times[i], slope * xi + intercept]);
-  }
-
-  const option = {
-    animation: false,
-    title: {
-      text: sensor.name + ' 时程曲线',
-      left: 'center',
-      textStyle: { fontSize: 16 }
-    },
-    grid: { top: 60, bottom: 40, left: 50, right: 30 },
-    xAxis: {
-      type: 'category',
-      data: times,
-      axisLabel: {
-        formatter: (value) => {
-           // Excel date format (number > 40000)
-           if (typeof value === 'number' && value > 40000 && value < 60000) {
-             const date = new Date((value - 25569) * 86400 * 1000);
-             return format(date, 'MM-dd');
-           }
-           // Simple date formatting if string looks like date
-           if (typeof value === 'string' && value.includes('T')) {
-             return value.split('T')[0];
-           }
-           if (typeof value === 'string' && !isNaN(Date.parse(value))) {
-             return format(new Date(value), 'MM-dd');
-           }
-           return value;
-        },
-        rotate: 30, // Rotate labels to avoid overlap
-        fontSize: 10
+    // Calculate Trend Line (Linear Regression)
+    let trendData = [];
+    if (times.length > 1) {
+      const n = times.length;
+      let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+      
+      // Normalize time to start from 0 to avoid large number precision issues
+      const startTime = times[0];
+      const x = times.map(t => t - startTime);
+      
+      for (let i = 0; i < n; i++) {
+        sumX += x[i];
+        sumY += values[i];
+        sumXY += x[i] * values[i];
+        sumXX += x[i] * x[i];
       }
-    },
-    yAxis: {
-      type: 'value',
-      scale: true // auto scale
-    },
-    series: [
-      {
-        name: '监测值',
-        data: values,
-        type: 'line',
-        smooth: true,
-        symbol: 'none', // no dots for performance
-        lineStyle: { width: 2, color: '#2563eb' }
-      },
-      // Trend Line
-      ...(trendData.length > 0 ? [{
-        name: '趋势项',
-        data: trendData,
-        type: 'line',
-        smooth: false,
-        symbol: 'none',
-        lineStyle: { width: 2, color: '#dc2626', type: 'dashed', opacity: 0.7 }
-      }] : [])
-    ],
-    legend: {
-      data: ['监测值', '趋势项'],
-      top: 30
+      
+      const denominator = (n * sumXX - sumX * sumX);
+      if (denominator !== 0) {
+        const slope = (n * sumXY - sumX * sumY) / denominator;
+        const intercept = (sumY - slope * sumX) / n;
+        trendData = x.map((xi, i) => [times[i], slope * xi + intercept]);
+      }
     }
-  };
-  
-  chart.setOption(option);
-  
-  return canvas.toBuffer('image/png');
+
+    const option = {
+      animation: false,
+      title: {
+        text: sensor.name + ' 时程曲线',
+        left: 'center',
+        textStyle: { fontSize: 16 }
+      },
+      grid: { top: 60, bottom: 40, left: 50, right: 30 },
+      xAxis: {
+        type: 'category',
+        data: times,
+        axisLabel: {
+          formatter: (value) => {
+             // Excel date format (number > 40000)
+             if (typeof value === 'number' && value > 40000 && value < 60000) {
+               const date = new Date((value - 25569) * 86400 * 1000);
+               return format(date, 'MM-dd');
+             }
+             // Simple date formatting if string looks like date
+             if (typeof value === 'string' && value.includes('T')) {
+               return value.split('T')[0];
+             }
+             if (typeof value === 'string' && !isNaN(Date.parse(value))) {
+               return format(new Date(value), 'MM-dd');
+             }
+             return value;
+          },
+          rotate: 30, // Rotate labels to avoid overlap
+          fontSize: 10
+        }
+      },
+      yAxis: {
+        type: 'value',
+        scale: true // auto scale
+      },
+      series: [
+        {
+          name: '监测值',
+          data: values,
+          type: 'line',
+          smooth: true,
+          symbol: 'none', // no dots for performance
+          lineStyle: { width: 2, color: '#2563eb' }
+        },
+        // Trend Line
+        ...(trendData.length > 0 ? [{
+          name: '趋势项',
+          data: trendData,
+          type: 'line',
+          smooth: false,
+          symbol: 'none',
+          lineStyle: { width: 2, color: '#dc2626', type: 'dashed', opacity: 0.7 }
+        }] : [])
+      ],
+      legend: {
+        data: ['监测值', '趋势项'],
+        top: 30
+      }
+    };
+    
+    chart.setOption(option);
+    
+    return canvas.toBuffer('image/png');
+  } finally {
+    chart.dispose();
+  }
 };
 
 export const generateCorrelationChartImage = (tempSensor, defSensor) => {
@@ -176,87 +182,91 @@ export const generateCorrelationChartImage = (tempSensor, defSensor) => {
   const canvas = createCanvas(width, height);
   const chart = echarts.init(canvas);
 
-  // Match data points
-  const points = [];
-  const tempMap = new Map();
-  tempSensor.data.forEach(d => tempMap.set(String(d.time), d.value));
+  try {
+    // Match data points
+    const points = [];
+    const tempMap = new Map();
+    tempSensor.data.forEach(d => tempMap.set(String(d.time), d.value));
 
-  defSensor.data.forEach(d => {
-    const timeStr = String(d.time);
-    if (tempMap.has(timeStr)) {
-      points.push([tempMap.get(timeStr), d.value]);
+    defSensor.data.forEach(d => {
+      const timeStr = String(d.time);
+      if (tempMap.has(timeStr)) {
+        points.push([tempMap.get(timeStr), d.value]);
+      }
+    });
+
+    if (points.length === 0) return null;
+
+    // Calculate Linear Regression for Correlation Trend Line
+    let trendData = [];
+    let equation = '';
+    
+    const regression = calculateLinearRegression(points);
+    
+    if (regression) {
+      const { slope, intercept, equation: eq } = regression;
+      equation = eq;
+      
+      // Generate line points (min X and max X)
+      const xValues = points.map(p => p[0]);
+      const minX = Math.min(...xValues);
+      const maxX = Math.max(...xValues);
+      
+      trendData = [
+        [minX, slope * minX + intercept],
+        [maxX, slope * maxX + intercept]
+      ];
     }
-  });
 
-  if (points.length === 0) return null;
-
-  // Calculate Linear Regression for Correlation Trend Line
-  let trendData = [];
-  let equation = '';
-  
-  const regression = calculateLinearRegression(points);
-  
-  if (regression) {
-    const { slope, intercept, equation: eq } = regression;
-    equation = eq;
-    
-    // Generate line points (min X and max X)
-    const xValues = points.map(p => p[0]);
-    const minX = Math.min(...xValues);
-    const maxX = Math.max(...xValues);
-    
-    trendData = [
-      [minX, slope * minX + intercept],
-      [maxX, slope * maxX + intercept]
-    ];
-  }
-
-  const option = {
-    animation: false,
-    title: {
-      text: '温度-变形相关性分析',
-      subtext: equation ? `拟合方程: ${equation}` : '',
-      left: 'center',
-      textStyle: { fontSize: 16 }
-    },
-    grid: { top: 60, bottom: 40, left: 50, right: 30 },
-    legend: {
-      data: ['观测数据', '拟合曲线'],
-      top: 30
-    },
-    xAxis: {
-      type: 'value',
-      name: '温度 (°C)',
-      nameLocation: 'middle',
-      nameGap: 25,
-      scale: true
-    },
-    yAxis: {
-      type: 'value',
-      name: '变形 (mm)',
-      scale: true
-    },
-    series: [
-      {
-        name: '观测数据',
-        type: 'scatter',
-        data: points,
-        symbolSize: 6,
-        itemStyle: { color: '#7c3aed' } // Purple color
+    const option = {
+      animation: false,
+      title: {
+        text: '温度-变形相关性分析',
+        subtext: equation ? `拟合方程: ${equation}` : '',
+        left: 'center',
+        textStyle: { fontSize: 16 }
       },
-      // Regression Line
-      ...(trendData.length > 0 ? [{
-        name: '拟合曲线',
-        type: 'line',
-        data: trendData,
-        showSymbol: false,
-        lineStyle: { width: 2, color: '#dc2626', type: 'dashed' }
-      }] : [])
-    ]
-  };
+      grid: { top: 60, bottom: 40, left: 50, right: 30 },
+      legend: {
+        data: ['观测数据', '拟合曲线'],
+        top: 30
+      },
+      xAxis: {
+        type: 'value',
+        name: '温度 (°C)',
+        nameLocation: 'middle',
+        nameGap: 25,
+        scale: true
+      },
+      yAxis: {
+        type: 'value',
+        name: '变形 (mm)',
+        scale: true
+      },
+      series: [
+        {
+          name: '观测数据',
+          type: 'scatter',
+          data: points,
+          symbolSize: 6,
+          itemStyle: { color: '#7c3aed' } // Purple color
+        },
+        // Regression Line
+        ...(trendData.length > 0 ? [{
+          name: '拟合曲线',
+          type: 'line',
+          data: trendData,
+          showSymbol: false,
+          lineStyle: { width: 2, color: '#dc2626', type: 'dashed' }
+        }] : [])
+      ]
+    };
 
-  chart.setOption(option);
-  return canvas.toBuffer('image/png');
+    chart.setOption(option);
+    return canvas.toBuffer('image/png');
+  } finally {
+    chart.dispose();
+  }
 };
 
 export const generateWordReport = async (bridges, cover, reportSections, deviceStatuses, onProgress) => {
