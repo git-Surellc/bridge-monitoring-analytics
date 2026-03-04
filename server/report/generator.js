@@ -46,8 +46,8 @@ registerCustomFont();
 // Helper to identify sensor type
 const KEYWORDS = {
   INCLINATION: ['倾角', 'inclination', 'tilt'],
-  DISPLACEMENT: ['竖向位移', '沉降', 'displacement', 'settlement'],
-  ACCELERATION: ['加速度', 'acceleration'],
+  DISPLACEMENT: ['竖向位移', '沉降', 'displacement', 'settlement', '位移', '挠度'],
+  ACCELERATION: ['加速度', 'acceleration', '振动', 'vibration'],
   TEMPERATURE: ['温度', 'temperature'],
   CRACK: ['裂缝', 'crack'],
 };
@@ -64,6 +64,15 @@ const getSensorType = (sensor) => {
   if (KEYWORDS.CRACK.some(k => text.includes(k))) return 'crack';
   
   return null;
+};
+
+const getUnit = (sensor) => {
+  const type = getSensorType(sensor);
+  if (type === 'inclination') return '°';
+  if (type === 'acceleration') return 'mg';
+  if (type === 'displacement') return 'mm';
+  if (type === 'crack') return 'mm';
+  return 'mm';
 };
 
 // Helper to format sensor title (ported from frontend)
@@ -148,10 +157,11 @@ export const generateChartImage = (sensor) => {
       }
     }
 
+    const unit = getUnit(sensor);
     const option = {
       animation: false,
       title: {
-        text: sensor.name + ' 时程曲线',
+        text: formatSensorTitle(sensor.name) + ' 时程曲线',
         left: 'center',
         textStyle: { fontSize: 16 }
       },
@@ -181,11 +191,14 @@ export const generateChartImage = (sensor) => {
       },
       yAxis: {
         type: 'value',
-        scale: true // auto scale
+        scale: true, // auto scale
+        name: `单位 (${unit})`,
+        nameLocation: 'middle',
+        nameGap: 45
       },
       series: [
         {
-          name: '监测值',
+          name: '',
           data: values,
           type: 'line',
           smooth: true,
@@ -194,18 +207,14 @@ export const generateChartImage = (sensor) => {
         },
         // Trend Line
         ...(trendData.length > 0 ? [{
-          name: '趋势项',
+          name: '',
           data: trendData,
           type: 'line',
           smooth: false,
           symbol: 'none',
           lineStyle: { width: 2, color: '#dc2626', type: 'dashed', opacity: 0.7 }
         }] : [])
-      ],
-      legend: {
-        data: ['监测值', '趋势项'],
-        top: 30
-      }
+      ]
     };
     
     chart.setOption(option);
