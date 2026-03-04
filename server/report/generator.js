@@ -161,11 +161,11 @@ export const generateChartImage = (sensor) => {
     const option = {
       animation: false,
       title: {
-        text: formatSensorTitle(sensor.name) + ' 时程曲线',
+        text: `${formatSensorTitle(sensor.name)} 时程曲线（单位：${unit}）`,
         left: 'center',
         textStyle: { fontSize: 16 }
       },
-      grid: { top: 60, bottom: 40, left: 50, right: 30 },
+      grid: { top: 60, bottom: 40, left: 90, right: 30 },
       xAxis: {
         type: 'category',
         data: times,
@@ -194,7 +194,8 @@ export const generateChartImage = (sensor) => {
         scale: true, // auto scale
         name: `单位 (${unit})`,
         nameLocation: 'middle',
-        nameGap: 45
+        nameGap: 45,
+        nameTextStyle: { fontSize: 12 }
       },
       series: [
         {
