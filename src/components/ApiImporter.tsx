@@ -440,10 +440,12 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
             type="text"
             value={userOrder}
             onChange={(e) => setUserOrder(e.target.value)}
-            placeholder="输入ID顺序，用逗号分隔，例如: bridge-1, bridge-2, bridge-3"
+            placeholder="输入ID顺序，逗号分隔。支持前缀区分类型：Q+ID为结构/桥梁，S+ID为隧道。例如: Q101, S101"
             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
-          <p className="text-xs text-gray-500 mt-1">生成报告和预览时将按照此顺序排列</p>
+          <p className="text-xs text-gray-500 mt-1">
+            生成报告和预览时将按照此顺序排列。若ID重复，请使用 Q/S 前缀区分 (Q=结构, S=隧道)。
+          </p>
         </div>
         
         <div>
@@ -453,11 +455,13 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
           <textarea
             value={groupDefinitions}
             onChange={(e) => setGroupDefinitions(e.target.value)}
-            placeholder={'每行定义一个分组，格式：分组名称: ID1, ID2, ID3\n例如：\n一标段: bridge-1, bridge-2\n二标段: bridge-3, bridge-4'}
+            placeholder={'每行定义一个分组，格式：分组名称: ID1, ID2\n支持前缀区分类型：Q+ID为结构，S+ID为隧道\n例如：\n一标段: Q101, S101\n二标段: Q102, S102'}
             rows={3}
             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
-          <p className="text-xs text-gray-500 mt-1">定义的组将会在报告中显示为独立章节</p>
+          <p className="text-xs text-gray-500 mt-1">
+            定义的组将会在报告中显示为独立章节。支持使用 Q/S 前缀区分不同类型的同名ID。
+          </p>
         </div>
       </div>
 

@@ -491,68 +491,95 @@ export interface StructureGroup {
   structures: StructureData[];
 }
 
+const parseStructureToken = (token: string) => {
+  const t = token.trim();
+  const upper = t.toUpperCase();
+  
+  if (upper.startsWith('Q')) {
+    return { id: t.substring(1), type: '1' }; // Q -> Bridge (Type 1)
+  }
+  if (upper.startsWith('S')) {
+    return { id: t.substring(1), type: '2' }; // S -> Tunnel (Type 2)
+  }
+  return { id: t, type: null }; // No prefix -> Match any type (or strictly ID match)
+};
+
 export const sortStructuresByUserOrder = (structures: StructureData[], orderStr: string): StructureData[] => {
   if (!orderStr || !orderStr.trim()) return structures;
   
-  const order = orderStr.split(/[,\n]/).map(id => id.trim()).filter(Boolean);
-  if (order.length === 0) return structures;
-  
-  const orderMap = new Map(order.map((id, index) => [id, index]));
+  const tokens = orderStr.split(/[,\n]/).map(t => parseStructureToken(t)).filter(t => t.id);
+  if (tokens.length === 0) return structures;
   
   return [...structures].sort((a, b) => {
-    const indexA = orderMap.has(a.id) ? orderMap.get(a.id)! : 9999;
-    const indexB = orderMap.has(b.id) ? orderMap.get(b.id)! : 9999;
+    // Find index in user tokens
+    // Match logic: ID must match. If token has type, structure type must match (defaulting to '1' if undefined).
+    const idxA = tokens.findIndex(t => 
+      t.id === a.id && (!t.type || t.type === (a.type || '1'))
+    );
+    const idxB = tokens.findIndex(t => 
+      t.id === b.id && (!t.type || t.type === (b.type || '1'))
+    );
     
-    if (indexA !== indexB) return indexA - indexB;
-    // Fallback to original order (or name) if not specified
+    // If both found, sort by index
+    if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+    
+    // If one found, it comes first
+    if (idxA !== -1) return -1;
+    if (idxB !== -1) return 1;
+    
+    // Fallback to original order
     return 0;
   });
 };
 
 export const groupStructures = (structures: StructureData[], groupStr: string): StructureGroup[] => {
   if (!groupStr || !groupStr.trim()) {
-    // If no groups defined, return one default group containing all structures
-    return [{ name: '', structures }]; // Empty name means "ungrouped" logic
+    return [{ name: '', structures }];
   }
   
   const groups: StructureGroup[] = [];
-  const assignedIds = new Set<string>();
+  const assignedIds = new Set<string>(); // We track assigned structure objects actually, by unique ID
+  // Since ID might be duplicated across types, we should track unique key
+  const getUniqueKey = (s: StructureData) => `${s.id}-${s.type || '1'}`;
+  const assignedKeys = new Set<string>();
   
-  // Parse group definitions
   const lines = groupStr.split('\n');
   for (const line of lines) {
     if (!line.trim()) continue;
     
-    // Format: "Group Name: id1, id2, id3"
-    // Handle both Chinese and English colon
     const separatorIndex = line.indexOf(':') !== -1 ? line.indexOf(':') : line.indexOf('：');
     
     if (separatorIndex !== -1) {
       const groupName = line.substring(0, separatorIndex).trim();
       const idsStr = line.substring(separatorIndex + 1);
-      const ids = idsStr.split(/[,，]/).map(id => id.trim()).filter(Boolean);
+      const tokens = idsStr.split(/[,，]/).map(t => parseStructureToken(t)).filter(t => t.id);
       
-      // Filter structures that belong to this group
-      // Note: We should look up from the FULL structure list
-      const groupStructures = structures.filter(s => ids.includes(s.id));
+      // Filter structures that match any token in this group
+      const groupStructures = structures.filter(s => {
+        return tokens.some(t => 
+          t.id === s.id && (!t.type || t.type === (s.type || '1'))
+        );
+      });
       
       if (groupStructures.length > 0) {
-        // Sort structures within group based on the order in the definition line
-        groupStructures.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+        // Sort within group based on token order
+        groupStructures.sort((a, b) => {
+          const idxA = tokens.findIndex(t => t.id === a.id && (!t.type || t.type === (a.type || '1')));
+          const idxB = tokens.findIndex(t => t.id === b.id && (!t.type || t.type === (b.type || '1')));
+          return idxA - idxB;
+        });
         
         groups.push({
           name: groupName,
           structures: groupStructures
         });
-        groupStructures.forEach(s => assignedIds.add(s.id));
+        groupStructures.forEach(s => assignedKeys.add(getUniqueKey(s)));
       }
     }
   }
   
   // Handle unassigned structures
-  // Sort them by the global order if provided, or default
-  // Wait, `structures` passed in might already be sorted by `sortStructuresByUserOrder`.
-  const unassigned = structures.filter(s => !assignedIds.has(s.id));
+  const unassigned = structures.filter(s => !assignedKeys.has(getUniqueKey(s)));
   if (unassigned.length > 0) {
     groups.push({
       name: '未分组',
