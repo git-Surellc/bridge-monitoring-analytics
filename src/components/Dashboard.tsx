@@ -10,13 +10,15 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { AnalysisToolbar } from './AnalysisToolbar';
 import { AnalysisResultView } from './AnalysisResultView';
-import { AnalysisConfig, analyzeStructure, analyzeWithAI, StructureAnalysisResult, getSensorType, generateAiPrompt } from '../utils/analysis';
+import { AnalysisConfig, analyzeStructure, analyzeWithAI, StructureAnalysisResult, getSensorType, generateAiPrompt, sortStructuresByUserOrder, groupStructures, StructureGroup } from '../utils/analysis';
 
 interface DashboardProps {
   structures: StructureData[];
   importLogs?: LogEntry[];
   onClear: () => void;
   onBack?: () => void;
+  customOrder?: string;
+  customGroups?: string;
 }
 
 const DEFAULT_TEMPLATE: ReportTemplate = {
@@ -40,7 +42,17 @@ const DEFAULT_TEMPLATE: ReportTemplate = {
   ]
 };
 
-export function Dashboard({ structures, importLogs = [], onClear, onBack }: DashboardProps) {
+export function Dashboard({ structures, importLogs = [], onClear, onBack, customOrder, customGroups }: DashboardProps) {
+  // Process structures with custom order and grouping
+  const processedStructures = React.useMemo(() => {
+    return sortStructuresByUserOrder(structures, customOrder || '');
+  }, [structures, customOrder]);
+
+  const structureGroups = React.useMemo(() => {
+    if (!customGroups || !customGroups.trim()) return null;
+    return groupStructures(processedStructures, customGroups);
+  }, [processedStructures, customGroups]);
+
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<string>('');
   const [reportCover, setReportCover] = useState<ReportCover>({} as ReportCover);
@@ -123,14 +135,14 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
     }
 
     const newResults: Record<string, StructureAnalysisResult> = {};
-    structures.forEach(structure => {
+    processedStructures.forEach(structure => {
       const result = analyzeStructure(structure, analysisConfig);
       if (result) {
         newResults[structure.id] = result;
       }
     });
     setAnalysisResults(newResults);
-  }, [structures, analysisConfig]);
+  }, [processedStructures, analysisConfig]);
 
   // Perform AI Analysis (Manual Trigger Only)
   /* 
@@ -248,8 +260,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
     const aiConfig = JSON.parse(savedConfig);
 
     const targetStructures = structureId 
-      ? structures.filter(s => s.id === structureId)
-      : structures;
+      ? processedStructures.filter(s => s.id === structureId)
+      : processedStructures;
 
     if (targetStructures.length === 0) return;
 
@@ -318,9 +330,9 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
   // Compute Available Types for Toolbar
   const availableTypes = React.useMemo(() => {
     const types = new Set<string>();
-    const targetStructure = structures.find(s => s.id === expandedAnalysisStructureId);
+    const targetStructure = processedStructures.find(s => s.id === expandedAnalysisStructureId);
     // If a structure is expanded, show its types. Otherwise show all types.
-    const source = targetStructure ? [targetStructure] : structures;
+    const source = targetStructure ? [targetStructure] : processedStructures;
     
     source.forEach(s => {
       s.sensors.forEach(sensor => {
@@ -329,7 +341,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
       });
     });
     return types;
-  }, [structures, expandedAnalysisStructureId]);
+  }, [processedStructures, expandedAnalysisStructureId]);
 
   const handleAnalysisConfigChange = (key: keyof AnalysisConfig, value: boolean) => {
     setAnalysisConfig(prev => ({ ...prev, [key]: value }));
@@ -338,7 +350,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
   const refreshDeviceStatus = async () => {
     setIsRefreshingStatus(true);
     try {
-      const structureList = structures.map(b => ({
+      const structureList = processedStructures.map(b => ({
         id: b.id,
         name: b.name,
         type: b.type || '1'
@@ -373,7 +385,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
   };
 
   // Calculate report statistics
-  const totalCharts = structures.reduce((acc, structure) => acc + structure.sensors.length, 0);
+  const totalCharts = processedStructures.reduce((acc, structure) => acc + structure.sensors.length, 0);
   const totalWords = template.sections.reduce((acc, section) => {
     return acc + (section.content?.length || 0);
   }, 0);
@@ -463,11 +475,25 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
 
         // 1. Submit task to backend
         // Enrich structures with AI analysis results and algorithm results
-        const bridgesWithAi = structures.map(s => ({
+        // Use processedStructures to ensure correct order
+        const bridgesWithAi = processedStructures.map(s => ({
           ...s,
           aiAnalysis: aiResults[s.id] || null,
           analysis: analysisResults[s.id] || null
         }));
+
+        // Prepare groups if they exist
+        let exportGroups = null;
+        if (structureGroups) {
+          exportGroups = structureGroups.map(g => ({
+            name: g.name,
+            structures: g.structures.map(s => ({
+               ...s,
+               aiAnalysis: aiResults[s.id] || null,
+               analysis: analysisResults[s.id] || null
+            }))
+          }));
+        }
 
         const response = await fetch('/api/reports/generate', {
           method: 'POST',
@@ -475,7 +501,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            bridges: bridgesWithAi,
+            bridges: bridgesWithAi, // Sorted flat list
+            groups: exportGroups,   // Grouped list (optional)
             cover: reportCover,
             sections: template.sections,
             deviceStatuses: currentStatuses,
@@ -685,7 +712,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
       <div className="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-gray-100 z-20">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">分析仪表盘</h2>
-          <p className="text-gray-500">已加载 {structures.length} 个结构物数据</p>
+          <p className="text-gray-500">已加载 {processedStructures.length} 个结构物数据</p>
         </div>
         <div className="flex gap-3">
           <button
@@ -785,7 +812,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
                     </h4>
                   </div>
                   <div className="max-h-60 overflow-y-auto p-2 space-y-1">
-                    {structures.map((s, idx) => (
+                    {processedStructures.map((s, idx) => (
                       <button
                         key={s.id}
                         onClick={() => {
@@ -909,8 +936,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {structures.length > 0 ? (
-                              structures.map((structure) => {
+                            {processedStructures.length > 0 ? (
+                              processedStructures.map((structure) => {
                                 const device = deviceStatuses.find(d => d.id === structure.id) || null;
                                 const stats = device?.stats || {};
                                 const types = stats.types || {};
@@ -952,126 +979,243 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack }: Dash
 
                   {section.type === 'chart_analysis' && (
                     <div className="space-y-12">
-                      {structures.map((structure) => {
-                        const isExpanded = expandedAnalysisStructureId === structure.id;
-                        
-                        // Check if we should render charts for this structure
-                        // Render if expanded OR if we've rendered it before (keep in DOM for perf but hidden? No, better remove if huge)
-                        // Actually, for report preview, we want ALL rendered eventually.
-                        // But for performance, let's render on demand or if printing.
-                        
-                        // Logic: If user expands, render.
-                        // If exporting, we might need to force render? handled by isExporting logic or just render all?
-                        // Current logic: just map all.
-                        
-                        return (
-                          <details 
-                            key={structure.id} 
-                            id={`analysis-structure-${structure.id}`}
-                            className="group bg-white rounded-xl border border-gray-200 shadow-sm transition-all duration-300 open:pb-6 scroll-mt-[130px]"
-                            open={isExpanded}
-                          >
-                            <summary 
-                              className="sticky top-[58px] z-40 bg-white flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors list-none select-none border-b border-transparent group-open:border-gray-100 rounded-t-xl shadow-sm"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                if (!isExpanded) {
-                                  setRenderedSensorCharts(prev => {
-                                    const next = { ...prev };
-                                    for (const sensor of structure.sensors) {
-                                      next[`${structure.id}-${sensor.id}`] = true;
-                                    }
-                                    return next;
-                                  });
-                                }
-                                setExpandedAnalysisStructureId(isExpanded ? null : structure.id);
-                              }}
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className={cn("p-2 rounded-lg transition-colors", isExpanded ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-500")}>
-                                  <Activity className="w-5 h-5" />
-                                </div>
-                                <h4 className="text-lg font-bold text-gray-900">
-                                  {structure.name}
-                                </h4>
-                                <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-                                  {structure.sensors.length} 个测点
+                      {structureGroups ? (
+                        <div className="space-y-16">
+                          {structureGroups.map((group) => (
+                            <div key={group.name} className="space-y-8">
+                              <div className="flex items-center gap-3 pb-2 border-b border-gray-200">
+                                <h3 className="text-xl font-bold text-gray-800">{group.name}</h3>
+                                <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600">
+                                  {group.structures.length} 个结构
                                 </span>
                               </div>
-                              
-                              <div className="flex items-center gap-3">
-                                {/* Per-structure AI Analysis Button */}
-                                {hasAiConfig && analysisConfig.enableGlobal && analysisConfig.enableAi && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleRunAiAnalysis(structure.id);
-                                    }}
-                                    disabled={isAiLoading[structure.id]}
-                                    className={cn(
-                                      "px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5",
-                                      isAiLoading[structure.id]
-                                        ? "bg-purple-50 text-purple-400 cursor-wait"
-                                        : "bg-purple-50 text-purple-600 hover:bg-purple-100 hover:shadow-sm"
-                                    )}
-                                    title="点击运行该结构的 AI 分析"
-                                  >
-                                    {isAiLoading[structure.id] ? (
-                                      <>
-                                        <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                        <span>分析中...</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Brain className="w-4 h-4" />
-                                        <span>AI 分析</span>
-                                      </>
-                                    )}
-                                  </button>
-                                )}
-                                
-                                <div className="flex items-center gap-1 text-gray-400">
-                                  <span className="text-sm">{isExpanded ? '收起' : '展开'}</span>
-                                  {isExpanded ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
-                                </div>
-                              </div>
-                            </summary>
-                            
-                            <div className="px-6 pt-2">
-                              {/* Chart Grid */}
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {isExpanded && (
-                                  structure.sensors.map((sensor) => {
-                                    return (
-                                      <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                                         <SensorChart 
-                                           sensor={sensor} 
-                                           color="#2563eb" 
-                                         />
-                                      </div>
-                                    );
-                                  })
-                                )}
-                              </div>
+                              <div className="space-y-12">
+                                {group.structures.map((structure) => {
+                                  const isExpanded = expandedAnalysisStructureId === structure.id;
+                                  return (
+                                    <details 
+                                      key={structure.id} 
+                                      id={`analysis-structure-${structure.id}`}
+                                      className="group bg-white rounded-xl border border-gray-200 shadow-sm transition-all duration-300 open:pb-6 scroll-mt-[130px]"
+                                      open={isExpanded}
+                                    >
+                                      <summary 
+                                        className="sticky top-[58px] z-40 bg-white flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors list-none select-none border-b border-transparent group-open:border-gray-100 rounded-t-xl shadow-sm"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          if (!isExpanded) {
+                                            setRenderedSensorCharts(prev => {
+                                              const next = { ...prev };
+                                              for (const sensor of structure.sensors) {
+                                                next[`${structure.id}-${sensor.id}`] = true;
+                                              }
+                                              return next;
+                                            });
+                                          }
+                                          setExpandedAnalysisStructureId(isExpanded ? null : structure.id);
+                                        }}
+                                      >
+                                        <div className="flex items-center gap-3">
+                                          <div className={cn("p-2 rounded-lg transition-colors", isExpanded ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-500")}>
+                                            <Activity className="w-5 h-5" />
+                                          </div>
+                                          <h4 className="text-lg font-bold text-gray-900">
+                                            {structure.name}
+                                          </h4>
+                                          <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                                            {structure.sensors.length} 个测点
+                                          </span>
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-3">
+                                          {/* Per-structure AI Analysis Button */}
+                                          {hasAiConfig && analysisConfig.enableGlobal && analysisConfig.enableAi && (
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleRunAiAnalysis(structure.id);
+                                              }}
+                                              disabled={isAiLoading[structure.id]}
+                                              className={cn(
+                                                "px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5",
+                                                isAiLoading[structure.id]
+                                                  ? "bg-purple-50 text-purple-400 cursor-wait"
+                                                  : "bg-purple-50 text-purple-600 hover:bg-purple-100 hover:shadow-sm"
+                                              )}
+                                              title="点击运行该结构的 AI 分析"
+                                            >
+                                              {isAiLoading[structure.id] ? (
+                                                <>
+                                                  <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                                  <span>分析中...</span>
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <Brain className="w-4 h-4" />
+                                                  <span>AI 分析</span>
+                                                </>
+                                              )}
+                                            </button>
+                                          )}
+                                          
+                                          <div className="flex items-center gap-1 text-gray-400">
+                                            <span className="text-sm">{isExpanded ? '收起' : '展开'}</span>
+                                            {isExpanded ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
+                                          </div>
+                                        </div>
+                                      </summary>
+                                      
+                                      <div className="px-6 pt-2">
+                                        {/* Chart Grid */}
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                          {isExpanded && (
+                                            structure.sensors.map((sensor) => {
+                                              return (
+                                                <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                                                   <SensorChart 
+                                                     sensor={sensor} 
+                                                     color="#2563eb" 
+                                                   />
+                                                </div>
+                                              );
+                                            })
+                                          )}
+                                        </div>
 
-                              {/* Analysis Results */}
-                              {isExpanded && analysisConfig.enableGlobal && (
-                                <AnalysisResultView 
-                                  qualityResults={analysisResults[structure.id]?.quality}
-                                  trendResults={analysisResults[structure.id]?.trend}
-                                  deformationResults={analysisResults[structure.id]?.deformation}
-                                  accelerationResults={analysisResults[structure.id]?.acceleration}
-                                  crackResults={analysisResults[structure.id]?.crack}
-                                  correlationResult={analysisResults[structure.id]?.correlation}
-                                  aiResult={aiResults[structure.id]}
-                                  config={analysisConfig}
-                                  isLoadingAi={isAiLoading[structure.id]}
-                                />
-                              )}
+                                        {/* Analysis Results */}
+                                        {isExpanded && analysisConfig.enableGlobal && (
+                                          <AnalysisResultView 
+                                            qualityResults={analysisResults[structure.id]?.quality}
+                                            trendResults={analysisResults[structure.id]?.trend}
+                                            deformationResults={analysisResults[structure.id]?.deformation}
+                                            accelerationResults={analysisResults[structure.id]?.acceleration}
+                                            crackResults={analysisResults[structure.id]?.crack}
+                                            correlationResult={analysisResults[structure.id]?.correlation}
+                                            aiResult={aiResults[structure.id]}
+                                            config={analysisConfig}
+                                            isLoadingAi={isAiLoading[structure.id]}
+                                          />
+                                        )}
+                                      </div>
+                                    </details>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </details>
-                        );
-                      })}
+                          ))}
+                        </div>
+                      ) : (
+                        processedStructures.map((structure) => {
+                          const isExpanded = expandedAnalysisStructureId === structure.id;
+                          return (
+                            <details 
+                              key={structure.id} 
+                              id={`analysis-structure-${structure.id}`}
+                              className="group bg-white rounded-xl border border-gray-200 shadow-sm transition-all duration-300 open:pb-6 scroll-mt-[130px]"
+                              open={isExpanded}
+                            >
+                              <summary 
+                                className="sticky top-[58px] z-40 bg-white flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors list-none select-none border-b border-transparent group-open:border-gray-100 rounded-t-xl shadow-sm"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  if (!isExpanded) {
+                                    setRenderedSensorCharts(prev => {
+                                      const next = { ...prev };
+                                      for (const sensor of structure.sensors) {
+                                        next[`${structure.id}-${sensor.id}`] = true;
+                                      }
+                                      return next;
+                                    });
+                                  }
+                                  setExpandedAnalysisStructureId(isExpanded ? null : structure.id);
+                                }}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className={cn("p-2 rounded-lg transition-colors", isExpanded ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-500")}>
+                                    <Activity className="w-5 h-5" />
+                                  </div>
+                                  <h4 className="text-lg font-bold text-gray-900">
+                                    {structure.name}
+                                  </h4>
+                                  <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                                    {structure.sensors.length} 个测点
+                                  </span>
+                                </div>
+                                
+                                <div className="flex items-center gap-3">
+                                  {/* Per-structure AI Analysis Button */}
+                                  {hasAiConfig && analysisConfig.enableGlobal && analysisConfig.enableAi && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRunAiAnalysis(structure.id);
+                                      }}
+                                      disabled={isAiLoading[structure.id]}
+                                      className={cn(
+                                        "px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5",
+                                        isAiLoading[structure.id]
+                                          ? "bg-purple-50 text-purple-400 cursor-wait"
+                                          : "bg-purple-50 text-purple-600 hover:bg-purple-100 hover:shadow-sm"
+                                      )}
+                                      title="点击运行该结构的 AI 分析"
+                                    >
+                                      {isAiLoading[structure.id] ? (
+                                        <>
+                                          <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                          <span>分析中...</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Brain className="w-4 h-4" />
+                                          <span>AI 分析</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
+                                  
+                                  <div className="flex items-center gap-1 text-gray-400">
+                                    <span className="text-sm">{isExpanded ? '收起' : '展开'}</span>
+                                    {isExpanded ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
+                                  </div>
+                                </div>
+                              </summary>
+                              
+                              <div className="px-6 pt-2">
+                                {/* Chart Grid */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  {isExpanded && (
+                                    structure.sensors.map((sensor) => {
+                                      return (
+                                        <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                                           <SensorChart 
+                                             sensor={sensor} 
+                                             color="#2563eb" 
+                                           />
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                </div>
+
+                                {/* Analysis Results */}
+                                {isExpanded && analysisConfig.enableGlobal && (
+                                  <AnalysisResultView 
+                                    qualityResults={analysisResults[structure.id]?.quality}
+                                    trendResults={analysisResults[structure.id]?.trend}
+                                    deformationResults={analysisResults[structure.id]?.deformation}
+                                    accelerationResults={analysisResults[structure.id]?.acceleration}
+                                    crackResults={analysisResults[structure.id]?.crack}
+                                    correlationResult={analysisResults[structure.id]?.correlation}
+                                    aiResult={aiResults[structure.id]}
+                                    config={analysisConfig}
+                                    isLoadingAi={isAiLoading[structure.id]}
+                                  />
+                                )}
+                              </div>
+                            </details>
+                          );
+                        })
+                      )}
                     </div>
                   )}
 

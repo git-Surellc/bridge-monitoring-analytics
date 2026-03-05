@@ -291,6 +291,8 @@ export const generateCorrelationChartImage = (tempSensor, defSensor) => {
       yAxis: {
         type: 'value',
         name: '变形 (mm)',
+        nameLocation: 'middle',
+        nameGap: 25,
         scale: true
       },
       series: [
@@ -319,7 +321,7 @@ export const generateCorrelationChartImage = (tempSensor, defSensor) => {
   }
 };
 
-export const generateWordReport = async (bridges, cover, reportSections, deviceStatuses, onProgress) => {
+export const generateWordReport = async (bridges, cover, reportSections, deviceStatuses, onProgress, groups) => {
   const docChildren = [];
   
   // Calculate total work for progress tracking
@@ -329,8 +331,16 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
   if (reportSections) {
     for (const section of reportSections) {
       if (section.type === 'chart_analysis') {
-         for (const bridge of bridges) {
-            totalSensors += bridge.sensors.length;
+         if (groups && groups.length > 0) {
+            for (const group of groups) {
+               for (const bridge of group.structures) {
+                  totalSensors += (bridge.sensors || []).length;
+               }
+            }
+         } else {
+            for (const bridge of bridges) {
+               totalSensors += (bridge.sensors || []).length;
+            }
          }
       }
     }
@@ -471,7 +481,7 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
         case 'chart_analysis':
           docChildren.push(new Paragraph({ text: section.title, heading: HeadingLevel.HEADING_1 }));
           
-          for (const bridge of bridges) {
+          const processBridge = async (bridge) => {
              docChildren.push(
                new Paragraph({
                  text: bridge.name,
@@ -512,6 +522,7 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                              height: 300 
                            },
                            type: 'png',
+                           // Use object format for transformation if needed, but width/height is standard
                          }),
                        ],
                        alignment: AlignmentType.CENTER,
@@ -761,6 +772,25 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                    spacing: { after: 300 },
                  })
                );
+             }
+          };
+
+          if (groups && groups.length > 0) {
+             for (const group of groups) {
+                docChildren.push(
+                   new Paragraph({
+                      text: group.name,
+                      heading: HeadingLevel.HEADING_2,
+                      spacing: { before: 400, after: 200 },
+                   })
+                );
+                for (const bridge of group.structures) {
+                   await processBridge(bridge);
+                }
+             }
+          } else {
+             for (const bridge of bridges) {
+                await processBridge(bridge);
              }
           }
           

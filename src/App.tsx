@@ -41,6 +41,8 @@ export default function App() {
   
   const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'files' | 'ai-config'>('upload');
   const [importLogs, setImportLogs] = useState<any[]>([]);
+  const [customOrder, setCustomOrder] = useState('');
+  const [customGroups, setCustomGroups] = useState('');
 
   const handleUpload = async (files: File[]) => {
     setIsLoading(true);
@@ -325,7 +327,14 @@ export default function App() {
                     {importMode === 'file' ? (
                       <UploadArea onUpload={handleUpload} />
                     ) : (
-                      <ApiImporter onImport={handleApiImport} onLogUpdate={handleImportLogs} />
+                      <ApiImporter 
+                        onImport={handleApiImport} 
+                        onLogUpdate={handleImportLogs} 
+                        onConfigUpdate={(order, groups) => {
+                          setCustomOrder(order);
+                          setCustomGroups(groups);
+                        }}
+                      />
                     )}
                   </div>
                 </div>
@@ -338,6 +347,8 @@ export default function App() {
                 importLogs={importLogs}
                 onClear={handleClear} 
                 onBack={handleBack} 
+                customOrder={customOrder}
+                customGroups={customGroups}
               />
             )}
 

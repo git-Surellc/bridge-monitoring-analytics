@@ -8,6 +8,7 @@ import { cn } from '../utils/cn';
 interface ApiImporterProps {
   onImport: (data: StructureData[]) => void;
   onLogUpdate?: (logs: LogEntry[]) => void;
+  onConfigUpdate?: (order: string, groups: string) => void;
   className?: string;
 }
 
@@ -17,7 +18,7 @@ interface StructureItem {
   type: string; // "1" | "2" | "3"
 }
 
-export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterProps) {
+export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }: ApiImporterProps) {
   const [isLoadingResults, setIsLoadingResults] = useState(false);
 
   // Auth State
@@ -26,6 +27,17 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
   const [hasToken, setHasToken] = useState(false);
   const [showAuthInput, setShowAuthInput] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
+
+  // Custom Order & Grouping State
+  const [userOrder, setUserOrder] = useState('');
+  const [groupDefinitions, setGroupDefinitions] = useState('');
+
+  // Update parent when config changes
+  useEffect(() => {
+    if (onConfigUpdate) {
+      onConfigUpdate(userOrder, groupDefinitions);
+    }
+  }, [userOrder, groupDefinitions, onConfigUpdate]);
 
   const [month, setMonth] = useState(() => {
     // Try to recover from localStorage, otherwise default to current month
@@ -64,8 +76,19 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
           
           const blob = await fileRes.arrayBuffer();
           
-          // Use name from log if available, else find in structureList, else use ID
-          const name = log.name || structureList.find(s => s.id === log.id && s.type === log.type)?.name || log.id;
+          // Use name from structureList (Excel) FIRST, then log.name (API), then ID
+          // Relaxed matching: First try exact ID+Type match, then fallback to ID match if unique in Excel
+          let matchedStructure = structureList.find(s => s.id === log.id && (s.type === log.type || !log.type));
+          
+          if (!matchedStructure) {
+             // Fallback: Check if ID exists in Excel list (ignoring type mismatch if only one entry exists)
+             const candidates = structureList.filter(s => s.id === log.id);
+             if (candidates.length > 0) {
+               matchedStructure = candidates[0];
+             }
+          }
+
+          const name = matchedStructure?.name || log.name || log.id;
           
           const parsedData = await parseExcelArrayBuffer(blob, name);
           parsedData.id = log.id;
@@ -405,6 +428,36 @@ export function ApiImporter({ onImport, onLogUpdate, className }: ApiImporterPro
           <p className="text-xs text-gray-500 mt-1">
             Excel 包含三列: ID, 结构名称, 类型(结构/隧道/边坡)
           </p>
+        </div>
+      </div>
+
+      <div className="mb-4 space-y-4 border-t border-gray-100 pt-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            结构ID排序 (可选)
+          </label>
+          <input
+            type="text"
+            value={userOrder}
+            onChange={(e) => setUserOrder(e.target.value)}
+            placeholder="输入ID顺序，用逗号分隔，例如: bridge-1, bridge-2, bridge-3"
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">生成报告和预览时将按照此顺序排列</p>
+        </div>
+        
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            分组定义 (可选)
+          </label>
+          <textarea
+            value={groupDefinitions}
+            onChange={(e) => setGroupDefinitions(e.target.value)}
+            placeholder={'每行定义一个分组，格式：分组名称: ID1, ID2, ID3\n例如：\n一标段: bridge-1, bridge-2\n二标段: bridge-3, bridge-4'}
+            rows={3}
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">定义的组将会在报告中显示为独立章节</p>
         </div>
       </div>
 

@@ -655,7 +655,7 @@ app.delete('/api/admin/clear-database', (req, res) => {
 
 app.post('/api/reports/generate', async (req, res) => {
   try {
-    const { bridges, cover, sections, deviceStatuses } = req.body;
+    const { bridges, cover, sections, deviceStatuses, groups } = req.body;
     if (!bridges || !Array.isArray(bridges)) {
       return res.status(400).json({ error: 'Invalid data' });
     }
@@ -679,7 +679,7 @@ app.post('/api/reports/generate', async (req, res) => {
         // Generate Report
         const buffer = await generateWordReport(bridges, cover, sections, deviceStatuses, (progress) => {
            db.prepare('UPDATE reports SET progress = ? WHERE id = ?').run(progress, reportId);
-        });
+        }, groups);
         
         // Write to disk
         fs.writeFileSync(filePath, buffer);
