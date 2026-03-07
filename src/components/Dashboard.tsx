@@ -12,6 +12,8 @@ import { AnalysisToolbar } from './AnalysisToolbar';
 import { AnalysisResultView } from './AnalysisResultView';
 import { AnalysisConfig, analyzeStructure, analyzeWithAI, StructureAnalysisResult, getSensorType, generateAiPrompt, sortStructuresByUserOrder, groupStructures, StructureGroup } from '../utils/analysis';
 
+const getStructureKey = (structure: StructureData) => `${structure.id}-${structure.type || '1'}`;
+
 interface DashboardProps {
   structures: StructureData[];
   importLogs?: LogEntry[];
@@ -59,8 +61,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
   const [template, setTemplate] = useState<ReportTemplate>(DEFAULT_TEMPLATE);
   const [showTemplateEditor, setShowTemplateEditor] = useState(true);
   const [activeArea, setActiveArea] = useState<'editor' | 'preview'>('editor');
-  const [showImportErrors, setShowImportErrors] = useState(false);
-  const [expandedAnalysisStructureId, setExpandedAnalysisStructureId] = useState<string | null>(null);
+  const [showImportErrors, setShowImportErrors] = useState(true);
+  const [expandedAnalysisStructureKey, setExpandedAnalysisStructureKey] = useState<string | null>(null);
   const [renderedSensorCharts, setRenderedSensorCharts] = useState<Record<string, boolean>>({});
   
   // Device Status State
@@ -72,7 +74,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
   const [analysisConfig, setAnalysisConfig] = useState<AnalysisConfig>(() => {
     const saved = localStorage.getItem('analysis_config');
     return saved ? JSON.parse(saved) : {
-      enableGlobal: false,
+      enableGlobal: true,
       enableAi: false,
       enableInclination: true,
       enableDisplacement: true,
@@ -111,8 +113,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
   useEffect(() => {
     setRenderedSensorCharts({});
-    if (expandedAnalysisStructureId && !structures.some(b => b.id === expandedAnalysisStructureId)) {
-      setExpandedAnalysisStructureId(null);
+    if (expandedAnalysisStructureKey && !structures.some(s => getStructureKey(s) === expandedAnalysisStructureKey)) {
+      setExpandedAnalysisStructureKey(null);
     }
   }, [structures]);
 
@@ -138,7 +140,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     processedStructures.forEach(structure => {
       const result = analyzeStructure(structure, analysisConfig);
       if (result) {
-        newResults[structure.id] = result;
+        newResults[getStructureKey(structure)] = result;
       }
     });
     setAnalysisResults(newResults);
@@ -249,7 +251,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     };
   }, [aiBatchId]);
 
-  const handleRunAiAnalysis = async (structureId?: string) => {
+  const handleRunAiAnalysis = async (structureKey?: string) => {
     if (!analysisConfig.enableGlobal || !analysisConfig.enableAi || !hasAiConfig) return;
     
     const savedConfig = localStorage.getItem('ai_config');
@@ -259,8 +261,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     }
     const aiConfig = JSON.parse(savedConfig);
 
-    const targetStructures = structureId 
-      ? processedStructures.filter(s => s.id === structureId)
+    const targetStructures = structureKey 
+      ? processedStructures.filter(s => getStructureKey(s) === structureKey)
       : processedStructures;
 
     if (targetStructures.length === 0) return;
@@ -273,16 +275,31 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
     // Set loading state
     const loadingState: Record<string, boolean> = {};
-    targetStructures.forEach(s => loadingState[s.id] = true);
+    targetStructures.forEach(s => loadingState[getStructureKey(s)] = true);
     setIsAiLoading(prev => ({ ...prev, ...loadingState }));
 
     try {
-      // Prepare tasks
-      const tasks = targetStructures.map(s => ({
-        id: s.id,
-        name: s.name,
-        prompt: generateAiPrompt(s.name, s.sensors)
-      }));
+      const tasks = targetStructures.reduce((acc, s) => {
+        const key = getStructureKey(s);
+        const analysis = analysisResults[key] || analyzeStructure(s, analysisConfig);
+        if (!analysis) return acc;
+        acc.push({
+          id: key,
+          name: s.name,
+          prompt: generateAiPrompt(s, analysis),
+        });
+        return acc;
+      }, [] as Array<{ id: string; name: string; prompt: string }>);
+
+      if (tasks.length === 0) {
+        alert('没有可用于 AI 分析的结构数据');
+        setIsAiLoading(prev => {
+          const next = { ...prev };
+          targetStructures.forEach(s => delete next[getStructureKey(s)]);
+          return next;
+        });
+        return;
+      }
 
       const res = await fetch('/api/ai/batch/start', {
         method: 'POST',
@@ -304,7 +321,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       alert(`启动 AI 分析失败: ${err instanceof Error ? err.message : '未知错误'}`);
       setIsAiLoading(prev => {
         const next = { ...prev };
-        targetStructures.forEach(s => delete next[s.id]);
+        targetStructures.forEach(s => delete next[getStructureKey(s)]);
         return next;
       });
     }
@@ -330,7 +347,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
   // Compute Available Types for Toolbar
   const availableTypes = React.useMemo(() => {
     const types = new Set<string>();
-    const targetStructure = processedStructures.find(s => s.id === expandedAnalysisStructureId);
+    const targetStructure = processedStructures.find(s => getStructureKey(s) === expandedAnalysisStructureKey);
     // If a structure is expanded, show its types. Otherwise show all types.
     const source = targetStructure ? [targetStructure] : processedStructures;
     
@@ -341,7 +358,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       });
     });
     return types;
-  }, [processedStructures, expandedAnalysisStructureId]);
+  }, [processedStructures, expandedAnalysisStructureKey]);
 
   const handleAnalysisConfigChange = (key: keyof AnalysisConfig, value: boolean) => {
     setAnalysisConfig(prev => ({ ...prev, [key]: value }));
@@ -476,22 +493,28 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
         // 1. Submit task to backend
         // Enrich structures with AI analysis results and algorithm results
         // Use processedStructures to ensure correct order
-        const bridgesWithAi = processedStructures.map(s => ({
-          ...s,
-          aiAnalysis: aiResults[s.id] || null,
-          analysis: analysisResults[s.id] || null
-        }));
+        const bridgesWithAi = processedStructures.map(s => {
+          const key = getStructureKey(s);
+          return {
+            ...s,
+            aiAnalysis: aiResults[key] || null,
+            analysis: analysisResults[key] || null
+          };
+        });
 
         // Prepare groups if they exist
         let exportGroups = null;
         if (structureGroups) {
           exportGroups = structureGroups.map(g => ({
             name: g.name,
-            structures: g.structures.map(s => ({
-               ...s,
-               aiAnalysis: aiResults[s.id] || null,
-               analysis: analysisResults[s.id] || null
-            }))
+            structures: g.structures.map(s => {
+              const key = getStructureKey(s);
+              return {
+                ...s,
+                aiAnalysis: aiResults[key] || null,
+                analysis: analysisResults[key] || null
+              };
+            })
           }));
         }
 
@@ -812,34 +835,74 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                     </h4>
                   </div>
                   <div className="max-h-60 overflow-y-auto p-2 space-y-1">
-                    {processedStructures.map((s, idx) => (
-                      <button
-                        key={s.id}
-                        onClick={() => {
-                          const el = document.getElementById(`analysis-structure-${s.id}`);
-                          if (el) {
-                            // Expand the details element if needed
-                            if (!(el as HTMLDetailsElement).open) {
-                                (el as HTMLDetailsElement).open = true;
-                                // Trigger state update manually since setting open directly doesn't fire toggle event in React reliably sometimes
-                                setExpandedAnalysisStructureId(s.id);
-                                setRenderedSensorCharts(prev => {
-                                   const next = { ...prev };
-                                   for (const sensor of s.sensors) {
-                                     next[`${s.id}-${sensor.id}`] = true;
-                                   }
-                                   return next;
-                                 });
+                    {structureGroups ? (
+                      structureGroups.map((group) => (
+                        <div key={group.name} className="space-y-1 mb-2">
+                          <div className="px-2 py-1 text-xs font-bold text-gray-500 bg-gray-50 rounded">
+                            {group.name}
+                          </div>
+                          {group.structures.map((s, idx) => (
+                            <button
+                              key={getStructureKey(s)}
+                              onClick={() => {
+                                const structureKey = getStructureKey(s);
+                                const el = document.getElementById(`analysis-structure-${structureKey}`);
+                                if (el) {
+                                  // Expand the details element if needed
+                                  if (!(el as HTMLDetailsElement).open) {
+                                      (el as HTMLDetailsElement).open = true;
+                                      // Trigger state update manually since setting open directly doesn't fire toggle event in React reliably sometimes
+                                      setExpandedAnalysisStructureKey(structureKey);
+                                      setRenderedSensorCharts(prev => {
+                                         const next = { ...prev };
+                                         for (const sensor of s.sensors) {
+                                           next[`${structureKey}-${sensor.id}`] = true;
+                                         }
+                                         return next;
+                                       });
+                                  }
+                                  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                }
+                              }}
+                              className="w-full text-left px-3 py-1.5 rounded text-xs text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors truncate flex items-center gap-2 pl-4"
+                            >
+                              <span className="w-4 text-center text-gray-400 font-mono">{idx + 1}</span>
+                              {s.name}
+                            </button>
+                          ))}
+                        </div>
+                      ))
+                    ) : (
+                      processedStructures.map((s, idx) => (
+                        <button
+                          key={getStructureKey(s)}
+                          onClick={() => {
+                            const structureKey = getStructureKey(s);
+                            const el = document.getElementById(`analysis-structure-${structureKey}`);
+                            if (el) {
+                              // Expand the details element if needed
+                              if (!(el as HTMLDetailsElement).open) {
+                                  (el as HTMLDetailsElement).open = true;
+                                  // Trigger state update manually since setting open directly doesn't fire toggle event in React reliably sometimes
+                                  setExpandedAnalysisStructureKey(structureKey);
+                                  setRenderedSensorCharts(prev => {
+                                     const next = { ...prev };
+                                     for (const sensor of s.sensors) {
+                                       next[`${structureKey}-${sensor.id}`] = true;
+                                     }
+                                     return next;
+                                   });
+                              }
+                              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                             }
-                            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                          }
-                        }}
-                        className="w-full text-left px-3 py-1.5 rounded text-xs text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors truncate flex items-center gap-2"
-                      >
-                        <span className="w-4 text-center text-gray-400 font-mono">{idx + 1}</span>
-                        {s.name}
-                      </button>
-                    ))}
+                          }}
+                          className="w-full text-left px-3 py-1.5 rounded text-xs text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors truncate flex items-center gap-2"
+                        >
+                          <span className="w-4 text-center text-gray-400 font-mono">{idx + 1}</span>
+                          {s.name}
+                        </button>
+                      ))
+                    )}
                   </div>
                 </div>
               )}
@@ -938,11 +1001,11 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                           <tbody className="bg-white divide-y divide-gray-200">
                             {processedStructures.length > 0 ? (
                               processedStructures.map((structure) => {
-                                const device = deviceStatuses.find(d => d.id === structure.id) || null;
+                                const device = deviceStatuses.find(d => d.id === structure.id && (d.type || '1') === (structure.type || '1')) || null;
                                 const stats = device?.stats || {};
                                 const types = stats.types || {};
                                 return (
-                                  <tr key={structure.id}>
+                                  <tr key={getStructureKey(structure)}>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{structure.name}</td>
                                     {deviceTypeColumns.map((t) => (
                                       <td key={t} className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -991,11 +1054,12 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                               </div>
                               <div className="space-y-12">
                                 {group.structures.map((structure) => {
-                                  const isExpanded = expandedAnalysisStructureId === structure.id;
+                                  const structureKey = getStructureKey(structure);
+                                  const isExpanded = expandedAnalysisStructureKey === structureKey;
                                   return (
                                     <details 
-                                      key={structure.id} 
-                                      id={`analysis-structure-${structure.id}`}
+                                      key={structureKey} 
+                                      id={`analysis-structure-${structureKey}`}
                                       className="group bg-white rounded-xl border border-gray-200 shadow-sm transition-all duration-300 open:pb-6 scroll-mt-[130px]"
                                       open={isExpanded}
                                     >
@@ -1007,12 +1071,12 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                             setRenderedSensorCharts(prev => {
                                               const next = { ...prev };
                                               for (const sensor of structure.sensors) {
-                                                next[`${structure.id}-${sensor.id}`] = true;
+                                                next[`${structureKey}-${sensor.id}`] = true;
                                               }
                                               return next;
                                             });
                                           }
-                                          setExpandedAnalysisStructureId(isExpanded ? null : structure.id);
+                                          setExpandedAnalysisStructureKey(isExpanded ? null : structureKey);
                                         }}
                                       >
                                         <div className="flex items-center gap-3">
@@ -1033,18 +1097,18 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                             <button
                                               onClick={(e) => {
                                                 e.stopPropagation();
-                                                handleRunAiAnalysis(structure.id);
+                                                handleRunAiAnalysis(structureKey);
                                               }}
-                                              disabled={isAiLoading[structure.id]}
+                                              disabled={isAiLoading[structureKey]}
                                               className={cn(
                                                 "px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5",
-                                                isAiLoading[structure.id]
+                                                isAiLoading[structureKey]
                                                   ? "bg-purple-50 text-purple-400 cursor-wait"
                                                   : "bg-purple-50 text-purple-600 hover:bg-purple-100 hover:shadow-sm"
                                               )}
                                               title="点击运行该结构的 AI 分析"
                                             >
-                                              {isAiLoading[structure.id] ? (
+                                              {isAiLoading[structureKey] ? (
                                                 <>
                                                   <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                                                   <span>分析中...</span>
@@ -1085,15 +1149,15 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                         {/* Analysis Results */}
                                         {isExpanded && analysisConfig.enableGlobal && (
                                           <AnalysisResultView 
-                                            qualityResults={analysisResults[structure.id]?.quality}
-                                            trendResults={analysisResults[structure.id]?.trend}
-                                            deformationResults={analysisResults[structure.id]?.deformation}
-                                            accelerationResults={analysisResults[structure.id]?.acceleration}
-                                            crackResults={analysisResults[structure.id]?.crack}
-                                            correlationResult={analysisResults[structure.id]?.correlation}
-                                            aiResult={aiResults[structure.id]}
+                                            qualityResults={analysisResults[structureKey]?.quality}
+                                            trendResults={analysisResults[structureKey]?.trend}
+                                            deformationResults={analysisResults[structureKey]?.deformation}
+                                            accelerationResults={analysisResults[structureKey]?.acceleration}
+                                            crackResults={analysisResults[structureKey]?.crack}
+                                            correlationResult={analysisResults[structureKey]?.correlation}
+                                            aiResult={aiResults[structureKey]}
                                             config={analysisConfig}
-                                            isLoadingAi={isAiLoading[structure.id]}
+                                            isLoadingAi={isAiLoading[structureKey]}
                                           />
                                         )}
                                       </div>
@@ -1106,11 +1170,12 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                         </div>
                       ) : (
                         processedStructures.map((structure) => {
-                          const isExpanded = expandedAnalysisStructureId === structure.id;
+                          const structureKey = getStructureKey(structure);
+                          const isExpanded = expandedAnalysisStructureKey === structureKey;
                           return (
                             <details 
-                              key={structure.id} 
-                              id={`analysis-structure-${structure.id}`}
+                              key={structureKey} 
+                              id={`analysis-structure-${structureKey}`}
                               className="group bg-white rounded-xl border border-gray-200 shadow-sm transition-all duration-300 open:pb-6 scroll-mt-[130px]"
                               open={isExpanded}
                             >
@@ -1122,12 +1187,12 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                     setRenderedSensorCharts(prev => {
                                       const next = { ...prev };
                                       for (const sensor of structure.sensors) {
-                                        next[`${structure.id}-${sensor.id}`] = true;
+                                        next[`${structureKey}-${sensor.id}`] = true;
                                       }
                                       return next;
                                     });
                                   }
-                                  setExpandedAnalysisStructureId(isExpanded ? null : structure.id);
+                                  setExpandedAnalysisStructureKey(isExpanded ? null : structureKey);
                                 }}
                               >
                                 <div className="flex items-center gap-3">
@@ -1148,18 +1213,18 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        handleRunAiAnalysis(structure.id);
+                                        handleRunAiAnalysis(structureKey);
                                       }}
-                                      disabled={isAiLoading[structure.id]}
+                                      disabled={isAiLoading[structureKey]}
                                       className={cn(
                                         "px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5",
-                                        isAiLoading[structure.id]
+                                        isAiLoading[structureKey]
                                           ? "bg-purple-50 text-purple-400 cursor-wait"
                                           : "bg-purple-50 text-purple-600 hover:bg-purple-100 hover:shadow-sm"
                                       )}
                                       title="点击运行该结构的 AI 分析"
                                     >
-                                      {isAiLoading[structure.id] ? (
+                                      {isAiLoading[structureKey] ? (
                                         <>
                                           <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                                           <span>分析中...</span>
@@ -1200,15 +1265,15 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                 {/* Analysis Results */}
                                 {isExpanded && analysisConfig.enableGlobal && (
                                   <AnalysisResultView 
-                                    qualityResults={analysisResults[structure.id]?.quality}
-                                    trendResults={analysisResults[structure.id]?.trend}
-                                    deformationResults={analysisResults[structure.id]?.deformation}
-                                    accelerationResults={analysisResults[structure.id]?.acceleration}
-                                    crackResults={analysisResults[structure.id]?.crack}
-                                    correlationResult={analysisResults[structure.id]?.correlation}
-                                    aiResult={aiResults[structure.id]}
+                                    qualityResults={analysisResults[structureKey]?.quality}
+                                    trendResults={analysisResults[structureKey]?.trend}
+                                    deformationResults={analysisResults[structureKey]?.deformation}
+                                    accelerationResults={analysisResults[structureKey]?.acceleration}
+                                    crackResults={analysisResults[structureKey]?.crack}
+                                    correlationResult={analysisResults[structureKey]?.correlation}
+                                    aiResult={aiResults[structureKey]}
                                     config={analysisConfig}
-                                    isLoadingAi={isAiLoading[structure.id]}
+                                    isLoadingAi={isAiLoading[structureKey]}
                                   />
                                 )}
                               </div>

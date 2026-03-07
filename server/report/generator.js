@@ -653,8 +653,8 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                    docChildren.push(
                      new Paragraph({
                        children: [
-                         new TextRun({ text: `相关系数 (Pearson): ${corr.correlation}`, bold: true }),
-                         new TextRun({ text: `\t显著性 (P-Value): ${corr.pValue} (${corr.isSignificant ? '显著' : '不显著'})` }),
+                         new TextRun({ text: `相关系数 (Pearson): ${Number(corr.correlation).toFixed(4)}`, bold: true }),
+                         new TextRun({ text: `\t显著性 (P-Value): ${Number(corr.pValue).toFixed(4)} (${corr.isSignificant ? '显著' : '不显著'})` }),
                        ],
                        spacing: { after: 50 },
                      }),
@@ -714,22 +714,22 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                       if (quality) {
                          const parts = [];
                          if (quality.mean !== undefined && quality.mean !== null && Number.isFinite(Number(quality.mean))) {
-                           parts.push(`均值: ${quality.mean}`);
+                           parts.push(`均值: ${Number(quality.mean).toFixed(4)}`);
                          }
-                         parts.push(`缺失率: ${quality.missingRate}%`, `异常点: ${quality.outlierCount}`);
+                         parts.push(`缺失率: ${Number(quality.missingRate).toFixed(4)}%`, `异常点: ${quality.outlierCount}`);
                          details.push(new Paragraph({ text: `【数据质量】${parts.join(', ')}` }));
                       }
                       if (trend) {
-                         details.push(new Paragraph({ text: `【趋势分析】斜率: ${trend.slope}, R²: ${trend.rSquared}, 趋势: ${trend.trendDesc}` }));
+                         details.push(new Paragraph({ text: `【趋势分析】斜率: ${Number(trend.slope).toFixed(4)}, R²: ${Number(trend.rSquared).toFixed(4)}, 趋势: ${trend.trendDesc}` }));
                       }
                       if (deformation) {
-                         details.push(new Paragraph({ text: `【变形分析】极差: ${deformation.rangeValue}, 周期: ${deformation.periodicFeatures.mainPeriods.join(', ') || '无'}` }));
+                         details.push(new Paragraph({ text: `【变形分析】极差: ${Number(deformation.rangeValue).toFixed(4)}, 周期: ${deformation.periodicFeatures.mainPeriods.join(', ') || '无'}` }));
                       }
                       if (acceleration) {
-                         details.push(new Paragraph({ text: `【振动分析】PGA: ${acceleration.pga}, 主频: ${acceleration.naturalFreq}Hz (${acceleration.isFreqAbnormal ? '异常' : '正常'})` }));
+                         details.push(new Paragraph({ text: `【振动分析】PGA: ${Number(acceleration.pga).toFixed(4)}, 主频: ${Number(acceleration.naturalFreq).toFixed(4)}Hz (${acceleration.isFreqAbnormal ? '异常' : '正常'})` }));
                       }
                       if (crack) {
-                         details.push(new Paragraph({ text: `【裂缝分析】当前宽度: ${crack.maxWidth}mm, 7日预测: ${crack.predictedWidth7d}mm, 风险: ${crack.riskLevel}` }));
+                         details.push(new Paragraph({ text: `【裂缝分析】当前宽度: ${Number(crack.maxWidth).toFixed(4)}mm, 7日预测: ${Number(crack.predictedWidth7d).toFixed(4)}mm, 风险: ${crack.riskLevel}` }));
                       }
 
                       tableRows.push(

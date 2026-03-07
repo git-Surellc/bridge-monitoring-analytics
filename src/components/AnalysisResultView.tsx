@@ -86,12 +86,12 @@ export function AnalysisResultView({
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               <div className="bg-white/60 p-4 rounded-lg">
                 <div className="text-sm text-gray-500 mb-1">相关系数 (Pearson)</div>
-                <div className="text-2xl font-mono font-bold text-gray-900">{correlationResult.correlation}</div>
+                <div className="text-2xl font-mono font-bold text-gray-900">{correlationResult.correlation.toFixed(4)}</div>
               </div>
               <div className="bg-white/60 p-4 rounded-lg">
                 <div className="text-sm text-gray-500 mb-1">显著性 (P-Value)</div>
                 <div className={`text-xl font-mono font-bold ${correlationResult.isSignificant ? 'text-green-600' : 'text-gray-400'}`}>
-                  {correlationResult.pValue}
+                  {correlationResult.pValue.toFixed(4)}
                 </div>
                 <div className="text-xs text-gray-400 mt-1">{correlationResult.isSignificant ? '显著相关' : '未通过显著性检验'}</div>
               </div>
@@ -172,16 +172,16 @@ export function AnalysisResultView({
                     <div className="grid grid-cols-4 gap-2 text-center text-xs">
                       <div className="bg-gray-50 p-2 rounded">
                         <div className="text-gray-400 mb-1">均值</div>
-                        <div className="font-mono font-semibold">{quality.mean}</div>
+                        <div className="font-mono font-semibold">{quality.mean.toFixed(4)}</div>
                       </div>
                       <div className="bg-gray-50 p-2 rounded">
                         <div className="text-gray-400 mb-1">CV</div>
-                        <div className="font-mono font-semibold">{quality.cv}</div>
+                        <div className="font-mono font-semibold">{quality.cv.toFixed(4)}</div>
                       </div>
                       <div className="bg-gray-50 p-2 rounded">
                         <div className="text-gray-400 mb-1">缺失率</div>
                         <div className={`${quality.missingRate > 5 ? 'text-red-600' : 'text-gray-900'} font-mono font-semibold`}>
-                          {quality.missingRate}%
+                          {Number(quality.missingRate).toFixed(4)}%
                         </div>
                       </div>
                       <div className="bg-gray-50 p-2 rounded">
@@ -198,11 +198,11 @@ export function AnalysisResultView({
                     <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-gray-100">
                       <div className="flex justify-between items-center px-1">
                         <span className="text-gray-500">趋势斜率</span>
-                        <span className="font-mono font-medium text-gray-700">{trend.slope}</span>
+                        <span className="font-mono font-medium text-gray-700">{trend.slope.toFixed(4)}</span>
                       </div>
                       <div className="flex justify-between items-center px-1">
                         <span className="text-gray-500">拟合度(R²)</span>
-                        <span className="font-mono font-medium text-gray-700">{trend.rSquared}</span>
+                        <span className="font-mono font-medium text-gray-700">{trend.rSquared.toFixed(4)}</span>
                       </div>
                     </div>
                   )}
@@ -212,7 +212,7 @@ export function AnalysisResultView({
                     <div className="space-y-2 pt-2 border-t border-gray-100">
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-500">极差 (Range)</span>
-                        <span className="font-mono font-bold">{deformation.rangeValue}</span>
+                        <span className="font-mono font-bold">{deformation.rangeValue.toFixed(4)}</span>
                       </div>
                       {deformation.periodicFeatures.mainPeriods.length > 0 && (
                         <div className="text-xs text-gray-500 space-y-1">
@@ -232,17 +232,17 @@ export function AnalysisResultView({
                     <div className="space-y-2 pt-2 border-t border-gray-100">
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-500">PGA</span>
-                        <span className="font-mono font-bold">{acceleration.pga}</span>
+                        <span className="font-mono font-bold">{acceleration.pga.toFixed(4)}</span>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-500">主频 (Hz)</span>
                         <span className={`font-mono font-bold ${acceleration.isFreqAbnormal ? 'text-red-600' : 'text-green-600'}`}>
-                          {acceleration.naturalFreq}
+                          {acceleration.naturalFreq.toFixed(4)}
                         </span>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-500">PSD峰值</span>
-                        <span className="font-mono text-gray-600">{acceleration.psdValue}</span>
+                        <span className="font-mono text-gray-600">{acceleration.psdValue.toFixed(4)}</span>
                       </div>
                       {acceleration.isFreqAbnormal && (
                         <div className="text-xs text-red-600 flex items-center gap-1">

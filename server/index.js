@@ -494,6 +494,7 @@ app.post('/api/devices/status', async (req, res) => {
              return {
                id: struct.id,
                name: struct.name,
+               type: struct.type || '1',
                status: onlineCount > 0 ? (hasAbnormal ? 'warning' : 'online') : 'offline',
                lastUpdate: latestTime ? new Date(latestTime).toLocaleString() : 'Never',
                deviceMap,
@@ -506,10 +507,10 @@ app.post('/api/devices/status', async (req, res) => {
           }
         }
         // Fallback for API error or empty data
-        return { id: struct.id, name: struct.name, status: 'offline', lastUpdate: '-', stats: { total: 0, online: 0 } };
+        return { id: struct.id, name: struct.name, type: struct.type || '1', status: 'offline', lastUpdate: '-', stats: { total: 0, online: 0 } };
       } catch (err) {
         console.error(`Failed to fetch status for ${struct.name}:`, err.name === 'AbortError' ? 'Timeout' : err.message);
-        return { id: struct.id, name: struct.name, status: 'error', lastUpdate: '-', stats: { total: 0, online: 0 } };
+        return { id: struct.id, name: struct.name, type: struct.type || '1', status: 'error', lastUpdate: '-', stats: { total: 0, online: 0 } };
       }
     };
 

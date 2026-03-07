@@ -29,8 +29,21 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
   const [authLoading, setAuthLoading] = useState(false);
 
   // Custom Order & Grouping State
-  const [userOrder, setUserOrder] = useState('');
-  const [groupDefinitions, setGroupDefinitions] = useState('');
+  const [userOrder, setUserOrder] = useState(() => {
+    return localStorage.getItem('api_import_order') || '';
+  });
+  const [groupDefinitions, setGroupDefinitions] = useState(() => {
+    return localStorage.getItem('api_import_groups') || '';
+  });
+
+  // Persist config changes
+  useEffect(() => {
+    localStorage.setItem('api_import_order', userOrder);
+  }, [userOrder]);
+
+  useEffect(() => {
+    localStorage.setItem('api_import_groups', groupDefinitions);
+  }, [groupDefinitions]);
 
   // Update parent when config changes
   useEffect(() => {
@@ -50,9 +63,18 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     localStorage.setItem('api_import_month', month);
   }, [month]);
 
-  const [structureList, setStructureList] = useState<StructureItem[]>([]);
+  const [structureList, setStructureList] = useState<StructureItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('api_import_structure_list');
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
   const [isProcessing, setIsProcessing] = useState(false);
-  const [debugMode, setDebugMode] = useState(false);
+  const [debugMode, setDebugMode] = useState(true);
   const [progress, setProgress] = useState({ current: 0, total: 0, success: 0, fail: 0 });
   const [logs, setLogs] = useState<LogEntry[]>([]);
   
@@ -242,8 +264,8 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
       const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
       
       const items: StructureItem[] = [];
-      // Skip header row (start from index 1)
-      for (let i = 1; i < jsonData.length; i++) {
+      // Iterate all rows, check for header
+      for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i] as any[];
         if (!row || row.length < 1) continue;
         
@@ -253,6 +275,11 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
         
         if (!id) continue;
 
+        // Skip potential header row
+        if (id.toLowerCase() === 'id' || name.includes('名称') || name.includes('Name')) {
+          continue;
+        }
+
         let type = '1'; // Default structure
         if (typeRaw.includes('隧道') || typeRaw === '2') type = '2';
         else if (typeRaw.includes('边坡') || typeRaw === '3') type = '3';
@@ -261,6 +288,7 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
       }
       
       setStructureList(items);
+      localStorage.setItem('api_import_structure_list', JSON.stringify(items));
       setLogs([{ id: 'System', status: 'info', msg: `已加载 ${items.length} 个结构物` }]);
     } catch (err: any) {
       setLogs([{ id: 'System', status: 'error', msg: `解析文件失败: ${err.message}` }]);
@@ -305,7 +333,7 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     ));
     
     // Remove from processed set to allow re-parsing
-    processedIdsRef.current.delete(item.id);
+    processedIdsRef.current.delete(`${item.id}-${item.type || '1'}`);
 
     try {
       await fetch('/api/import/retry', {

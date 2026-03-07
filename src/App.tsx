@@ -41,8 +41,16 @@ export default function App() {
   
   const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'files' | 'ai-config'>('upload');
   const [importLogs, setImportLogs] = useState<any[]>([]);
-  const [customOrder, setCustomOrder] = useState('');
-  const [customGroups, setCustomGroups] = useState('');
+  const [customOrder, setCustomOrder] = useState(() => localStorage.getItem('api_import_order') || '');
+  const [customGroups, setCustomGroups] = useState(() => localStorage.getItem('api_import_groups') || '');
+
+  useEffect(() => {
+    localStorage.setItem('api_import_order', customOrder);
+  }, [customOrder]);
+
+  useEffect(() => {
+    localStorage.setItem('api_import_groups', customGroups);
+  }, [customGroups]);
 
   const handleUpload = async (files: File[]) => {
     setIsLoading(true);
@@ -54,8 +62,8 @@ export default function App() {
         newStructures.push(structureData);
       }
       setStructures((prev) => {
-        const existingIds = new Set(prev.map(b => b.id));
-        const uniqueNew = newStructures.filter(b => !existingIds.has(b.id));
+        const existingKeys = new Set(prev.map(b => `${b.id}-${b.type || '1'}`));
+        const uniqueNew = newStructures.filter(b => !existingKeys.has(`${b.id}-${b.type || '1'}`));
         return [...prev, ...uniqueNew];
       });
       setCurrentView('dashboard');
@@ -75,9 +83,17 @@ export default function App() {
 
   const handleApiImport = (newStructures: StructureData[]) => {
     setStructures((prev) => {
-      const existingIds = new Set(prev.map(b => b.id));
-      const uniqueNew = newStructures.filter(b => !existingIds.has(b.id));
-      return [...prev, ...uniqueNew];
+      // Create a map for faster lookup and update
+      const structureMap = new Map(prev.map(s => [`${s.id}-${s.type || '1'}`, s]));
+      
+      // Update or add new structures
+      newStructures.forEach(newS => {
+         const key = `${newS.id}-${newS.type || '1'}`;
+         // Overwrite existing structure to ensure name and data are updated
+         structureMap.set(key, newS);
+      });
+      
+      return Array.from(structureMap.values());
     });
     // Don't switch immediately if we want to show progress, 
     // but the current logic in ApiImporter handles the flow.

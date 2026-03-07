@@ -58,6 +58,7 @@ async function processImport(month, structures, task, token) {
         task.logs.push({ 
           id: item.id, 
           type: item.type,
+          name: item.name,
           status: 'skipped', 
           msg: `已存在 (无需请求): ${item.name}`,
           fromCache: true,
@@ -196,6 +197,7 @@ export const getImportStatus = (month) => {
       // Reconstruct logs from DB
       const logs = rows.map(row => ({
         id: row.structure_id,
+        type: row.structure_type,
         name: row.structure_name,
         status: row.status === 'success' ? 'success' : 'error',
         msg: row.status === 'success' ? '已完成' : (row.error_msg || '未知错误'),

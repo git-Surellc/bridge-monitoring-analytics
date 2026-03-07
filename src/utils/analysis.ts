@@ -1,4 +1,4 @@
-import { StructureData, SensorData, AnalysisConfig as BaseAnalysisConfig } from '../types';
+import { StructureData, SensorData } from '../types';
 
 // ==========================================
 // Types & Interfaces
@@ -236,7 +236,7 @@ const normalCDF = (x: number): number => {
 // Analysis Functions
 // ==========================================
 
-export const analyzeStructure = (structure: StructureData, config: BaseAnalysisConfig): StructureAnalysisResult | null => {
+export const analyzeStructure = (structure: StructureData, config: AnalysisConfig): StructureAnalysisResult | null => {
   if (!structure.sensors.length) return null;
 
   const results: StructureAnalysisResult = {
@@ -274,7 +274,7 @@ export const analyzeStructure = (structure: StructureData, config: BaseAnalysisC
       std: s,
       cv: avg !== 0 ? s / Math.abs(avg) : 0,
       outlierRange: [avg - 3 * s, avg + 3 * s],
-      outlierTimestamps: outliers.map(d => d.time)
+      outlierTimestamps: outliers.map(d => String(d.time))
     };
   });
 
@@ -339,9 +339,9 @@ export const analyzeStructure = (structure: StructureData, config: BaseAnalysisC
 
         results.deformation[sensor.id] = {
           maxValue: maxVal,
-          maxTimestamp: maxTime,
+          maxTimestamp: String(maxTime),
           minValue: minVal,
-          minTimestamp: minTime,
+          minTimestamp: String(minTime),
           rangeValue: range,
           periodicFeatures: { mainPeriods: [], amplitudes: [] } // FFT not implemented
         };
@@ -361,7 +361,7 @@ export const analyzeStructure = (structure: StructureData, config: BaseAnalysisC
         
         results.acceleration[sensor.id] = {
           pga,
-          pgaTimestamp: pgaTime,
+          pgaTimestamp: String(pgaTime),
           naturalFreq: 0, // Requires FFT
           psdValue: 0,
           isFreqAbnormal: false
@@ -474,12 +474,46 @@ export const generateAiPrompt = (structure: StructureData, analysis: StructureAn
   return `Analyze the structural health based on this data:\n${summary.join('\n')}\nProvide a brief assessment and recommendations.`;
 };
 
+export const generateOverallSummaryPrompt = (structures: StructureData[]): string => {
+  return `Please summarize the structural health of the following ${structures.length} structures:
+${structures.map(s => `- ${s.name} (ID: ${s.id})`).join('\n')}
+Based on the detailed analysis provided for each.`;
+};
+
+export const callAiApi = async (prompt: string, config: any): Promise<string> => {
+    try {
+        const response = await fetch(`${config.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${config.apiKey}`
+            },
+            body: JSON.stringify({
+                model: config.model,
+                messages: [{ role: 'user', content: prompt }]
+            })
+        });
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "No response from AI.";
+    } catch (error) {
+        console.error("AI API Call Error:", error);
+        throw error;
+    }
+};
+
 export const analyzeWithAI = async (structure: StructureData, aiConfig: any): Promise<string> => {
-    // Mock implementation or call backend
-    // Since we don't have the API key here (it's in localStorage but we shouldn't expose it easily in frontend logic if not needed),
-    // we typically call a backend proxy.
-    // For now, return a placeholder if not implemented.
-    return "AI analysis requires backend integration.";
+    const analysis = analyzeStructure(structure, {
+        enableGlobal: true,
+        enableAi: true,
+        enableInclination: true,
+        enableDisplacement: true,
+        enableAcceleration: true,
+        enableTemperature: true,
+        enableCrack: true,
+        enableCorrelation: true
+    });
+    const prompt = generateAiPrompt(structure, analysis);
+    return callAiApi(prompt, aiConfig);
 };
 
 // ==========================================
@@ -543,7 +577,7 @@ export const groupStructures = (structures: StructureData[], groupStr: string): 
   const getUniqueKey = (s: StructureData) => `${s.id}-${s.type || '1'}`;
   const assignedKeys = new Set<string>();
   
-  const lines = groupStr.split('\n');
+  const lines = groupStr.split(/[\n;；]+/);
   for (const line of lines) {
     if (!line.trim()) continue;
     
