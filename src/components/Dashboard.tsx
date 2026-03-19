@@ -10,7 +10,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { AnalysisToolbar } from './AnalysisToolbar';
 import { AnalysisResultView } from './AnalysisResultView';
-import { AnalysisConfig, analyzeStructure, analyzeWithAI, StructureAnalysisResult, getSensorType, generateAiPrompt, sortStructuresByUserOrder, groupStructures, StructureGroup } from '../utils/analysis';
+import { AnalysisConfig, analyzeStructure, analyzeWithAI, StructureAnalysisResult, getSensorType, generateAiPrompt, sortStructuresByUserOrder, groupStructures, StructureGroup, denoiseData } from '../utils/analysis';
 
 const getStructureKey = (structure: StructureData) => `${structure.id}-${structure.type || '1'}`;
 
@@ -81,7 +81,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       enableAcceleration: true,
       enableTemperature: true,
       enableCrack: true,
-      enableCorrelation: true
+      enableCorrelation: true,
+      enableDenoise: false
     };
   });
   const [analysisResults, setAnalysisResults] = useState<Record<string, StructureAnalysisResult>>({});
@@ -92,6 +93,13 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
   const [isAiLoading, setIsAiLoading] = useState<Record<string, boolean>>({});
   const [hasAiConfig, setHasAiConfig] = useState(false);
   const [aiBatchId, setAiBatchId] = useState<string | null>(null);
+  const [denoiseStructures, setDenoiseStructures] = useState<Record<string, boolean>>({});
+  const [denoiseSensors, setDenoiseSensors] = useState<Record<string, boolean>>({});
+  const [denoiseRules, setDenoiseRules] = useState<Record<string, { maxDelta?: number | null; min?: number | null; max?: number | null }>>(() => {
+    const saved = localStorage.getItem('denoise_rules_v2');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [showDenoiseConfig, setShowDenoiseConfig] = useState(false);
 
   const reportRef = useRef<HTMLDivElement>(null);
   const areaVisibilityRef = useRef<{ editor: number; preview: number }>({ editor: 0, preview: 0 });
@@ -138,13 +146,19 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
     const newResults: Record<string, StructureAnalysisResult> = {};
     processedStructures.forEach(structure => {
-      const result = analyzeStructure(structure, analysisConfig);
+      const key = getStructureKey(structure);
+      const sensors = structure.sensors.map(sensor => {
+        const displaySensor = getDisplaySensor(key, sensor);
+        return displaySensor;
+      });
+      const displayStructure = { ...structure, sensors };
+      const result = analyzeStructure(displayStructure, analysisConfig);
       if (result) {
-        newResults[getStructureKey(structure)] = result;
+        newResults[key] = result;
       }
     });
     setAnalysisResults(newResults);
-  }, [processedStructures, analysisConfig]);
+  }, [processedStructures, analysisConfig, denoiseStructures, denoiseSensors, denoiseRules]);
 
   // Perform AI Analysis (Manual Trigger Only)
   /* 
@@ -360,9 +374,86 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     return types;
   }, [processedStructures, expandedAnalysisStructureKey]);
 
+  const allAvailableTypes = React.useMemo(() => {
+    const types = new Set<string>();
+    processedStructures.forEach(s => {
+      s.sensors.forEach(sensor => {
+        const type = getSensorType(sensor);
+        if (type) types.add(type);
+      });
+    });
+    return types;
+  }, [processedStructures]);
+
+  const getTypeMeta = (type: string) => {
+    const map: Record<string, { label: string; unit: string }> = {
+      inclination: { label: '倾角', unit: '°' },
+      displacement: { label: '位移', unit: 'mm' },
+      acceleration: { label: '加速度', unit: 'm/s²' },
+      temperature: { label: '温度', unit: '℃' },
+      crack: { label: '裂缝', unit: 'mm' },
+    };
+    return map[type] || { label: '其他', unit: '' };
+  };
+
+  const getDenoiseRule = (sensor: any) => {
+    const type = getSensorType(sensor) || 'other';
+    const rule = denoiseRules[type] || {};
+    const maxDelta = typeof rule.maxDelta === 'number' && Number.isFinite(rule.maxDelta) && rule.maxDelta > 0 ? rule.maxDelta : undefined;
+    const min = typeof rule.min === 'number' && Number.isFinite(rule.min) ? rule.min : undefined;
+    const max = typeof rule.max === 'number' && Number.isFinite(rule.max) ? rule.max : undefined;
+    return { type, maxDelta, min, max };
+  };
+
+  const getDisplaySensor = (structureKey: string, sensor: any) => {
+    if (!analysisConfig.enableDenoise) return sensor;
+    const shouldDenoiseStructure = denoiseStructures[structureKey] ?? true;
+    const sensorKey = `${structureKey}-${sensor.id}`;
+    const shouldDenoiseSensor = denoiseSensors[sensorKey] ?? false;
+    const applyDenoise = shouldDenoiseSensor || shouldDenoiseStructure;
+    if (!applyDenoise) return sensor;
+    const rule = getDenoiseRule(sensor);
+    return { ...sensor, data: denoiseData(sensor.data, { maxDelta: rule.maxDelta, min: rule.min, max: rule.max }) };
+  };
+
+  const getDisplayStructure = (structure: any) => {
+    const key = getStructureKey(structure);
+    return { ...structure, sensors: structure.sensors.map((sensor: any) => getDisplaySensor(key, sensor)) };
+  };
+
   const handleAnalysisConfigChange = (key: keyof AnalysisConfig, value: boolean) => {
+    if (key === 'enableDenoise' && value) {
+      setDenoiseStructures(prev => {
+        const next = { ...prev };
+        for (const s of processedStructures) {
+          const k = getStructureKey(s);
+          if (next[k] === undefined) next[k] = true;
+        }
+        return next;
+      });
+    }
     setAnalysisConfig(prev => ({ ...prev, [key]: value }));
   };
+
+  useEffect(() => {
+    if (!analysisConfig.enableDenoise) return;
+    setDenoiseStructures(prev => {
+      const next = { ...prev };
+      let changed = false;
+      for (const s of processedStructures) {
+        const k = getStructureKey(s);
+        if (next[k] === undefined) {
+          next[k] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [analysisConfig.enableDenoise, processedStructures]);
+
+  useEffect(() => {
+    localStorage.setItem('denoise_rules_v2', JSON.stringify(denoiseRules));
+  }, [denoiseRules]);
 
   const refreshDeviceStatus = async () => {
     setIsRefreshingStatus(true);
@@ -495,8 +586,9 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
         // Use processedStructures to ensure correct order
         const bridgesWithAi = processedStructures.map(s => {
           const key = getStructureKey(s);
+          const displayStructure = getDisplayStructure(s);
           return {
-            ...s,
+            ...displayStructure,
             aiAnalysis: aiResults[key] || null,
             analysis: analysisResults[key] || null
           };
@@ -509,8 +601,9 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
             name: g.name,
             structures: g.structures.map(s => {
               const key = getStructureKey(s);
+              const displayStructure = getDisplayStructure(s);
               return {
-                ...s,
+                ...displayStructure,
                 aiAnalysis: aiResults[key] || null,
                 analysis: analysisResults[key] || null
               };
@@ -793,8 +886,146 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
           onAiAnalyze={() => handleRunAiAnalysis()}
           isAiAnalyzing={Object.values(isAiLoading).some(v => v)}
           onAiStop={() => handleStopAiAnalysis()}
+          onOpenDenoiseConfig={() => setShowDenoiseConfig(true)}
         />
       </div>
+
+      {showDenoiseConfig && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/40"
+          onMouseDown={() => setShowDenoiseConfig(false)}
+        >
+          <div
+            className="w-full max-w-2xl bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+              <div className="space-y-0.5">
+                <div className="text-base font-semibold text-gray-900">去噪配置</div>
+                <div className="text-xs text-gray-500">按指标类型设置：最大变化量 + 上下限（超出即剔除）</div>
+              </div>
+              <button
+                onClick={() => setShowDenoiseConfig(false)}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="px-6 py-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {Array.from(allAvailableTypes).sort().map((type: string) => {
+                  const meta = getTypeMeta(type);
+                  const rule = denoiseRules[type] || {};
+                  const maxDeltaValue = rule.maxDelta ?? '';
+                  const minValue = rule.min ?? '';
+                  const maxValue = rule.max ?? '';
+                  return (
+                    <div key={type} className="rounded-xl border border-gray-200 p-4">
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-gray-900 truncate">{meta.label}</div>
+                          <div className="text-xs text-gray-500">{meta.unit ? `单位：${meta.unit}` : '单位：-'}</div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div>
+                          <div className="text-xs text-gray-600 mb-1">最大变化量</div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.1}
+                              value={maxDeltaValue}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                setDenoiseRules(prev => ({
+                                  ...prev,
+                                  [type]: { ...(prev[type] || {}), maxDelta: raw === '' ? null : Number(raw) }
+                                }));
+                              }}
+                              className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-green-400 focus:ring-green-200"
+                              placeholder={meta.unit ? `例如：5 ${meta.unit}` : '例如：5'}
+                            />
+                            <div className="text-xs text-gray-500 w-10 text-right">{meta.unit || ''}</div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="text-xs text-gray-600 mb-1">下限</div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                step={0.1}
+                                value={minValue}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  setDenoiseRules(prev => ({
+                                    ...prev,
+                                    [type]: { ...(prev[type] || {}), min: raw === '' ? null : Number(raw) }
+                                  }));
+                                }}
+                                className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-green-400 focus:ring-green-200"
+                                placeholder="-"
+                              />
+                              <div className="text-xs text-gray-500 w-10 text-right">{meta.unit || ''}</div>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-gray-600 mb-1">上限</div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                step={0.1}
+                                value={maxValue}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  setDenoiseRules(prev => ({
+                                    ...prev,
+                                    [type]: { ...(prev[type] || {}), max: raw === '' ? null : Number(raw) }
+                                  }));
+                                }}
+                                className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-green-400 focus:ring-green-200"
+                                placeholder="-"
+                              />
+                              <div className="text-xs text-gray-500 w-10 text-right">{meta.unit || ''}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {allAvailableTypes.size === 0 && (
+                <div className="text-sm text-gray-600">未识别到指标类型</div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-100 bg-white flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  const defaults: Record<string, { maxDelta?: number | null; min?: number | null; max?: number | null }> = {};
+                  allAvailableTypes.forEach((t) => (defaults[t] = { maxDelta: null, min: null, max: null }));
+                  setDenoiseRules(prev => ({ ...defaults, ...prev }));
+                }}
+                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                填充空配置
+              </button>
+              <button
+                onClick={() => setShowDenoiseConfig(false)}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-12 relative">
         {/* Editor Area */}
@@ -824,10 +1055,29 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                   totalWords
                 }}
               />
-              
-              {/* Quick Structure Navigation (Only visible when Chart Analysis section exists) */}
+            </div>
+            
+            <div className="w-full flex-1 min-w-0 space-y-8">
+              <CoverEditor cover={reportCover} onChange={setReportCover} />
+              {showTemplateEditor && (
+                <TemplateEditor template={template} onUpdate={setTemplate} />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Preview Area */}
+        <div id="report-preview-section" className="w-full min-w-0 relative scroll-mt-32">
+          <div className="flex items-center gap-2 mb-4 print:hidden">
+            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              报告预览区域
+            </h3>
+          </div>
+          <div className="flex gap-8 items-start">
+            <div className="w-72 shrink-0 sticky top-[100px] self-start max-h-[calc(100vh-8rem)] overflow-y-auto z-30 hidden xl:block">
               {template.sections.some(s => s.type === 'chart_analysis') && (
-                <div className="mt-4 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <div className="p-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                     <h4 className="font-semibold text-gray-900 text-xs flex items-center gap-2">
                       <Activity className="w-3.5 h-3.5 text-blue-600" />
@@ -848,18 +1098,16 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                 const structureKey = getStructureKey(s);
                                 const el = document.getElementById(`analysis-structure-${structureKey}`);
                                 if (el) {
-                                  // Expand the details element if needed
                                   if (!(el as HTMLDetailsElement).open) {
-                                      (el as HTMLDetailsElement).open = true;
-                                      // Trigger state update manually since setting open directly doesn't fire toggle event in React reliably sometimes
-                                      setExpandedAnalysisStructureKey(structureKey);
-                                      setRenderedSensorCharts(prev => {
-                                         const next = { ...prev };
-                                         for (const sensor of s.sensors) {
-                                           next[`${structureKey}-${sensor.id}`] = true;
-                                         }
-                                         return next;
-                                       });
+                                    (el as HTMLDetailsElement).open = true;
+                                    setExpandedAnalysisStructureKey(structureKey);
+                                    setRenderedSensorCharts(prev => {
+                                      const next = { ...prev };
+                                      for (const sensor of s.sensors) {
+                                        next[`${structureKey}-${sensor.id}`] = true;
+                                      }
+                                      return next;
+                                    });
                                   }
                                   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                                 }
@@ -880,18 +1128,16 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                             const structureKey = getStructureKey(s);
                             const el = document.getElementById(`analysis-structure-${structureKey}`);
                             if (el) {
-                              // Expand the details element if needed
                               if (!(el as HTMLDetailsElement).open) {
-                                  (el as HTMLDetailsElement).open = true;
-                                  // Trigger state update manually since setting open directly doesn't fire toggle event in React reliably sometimes
-                                  setExpandedAnalysisStructureKey(structureKey);
-                                  setRenderedSensorCharts(prev => {
-                                     const next = { ...prev };
-                                     for (const sensor of s.sensors) {
-                                       next[`${structureKey}-${sensor.id}`] = true;
-                                     }
-                                     return next;
-                                   });
+                                (el as HTMLDetailsElement).open = true;
+                                setExpandedAnalysisStructureKey(structureKey);
+                                setRenderedSensorCharts(prev => {
+                                  const next = { ...prev };
+                                  for (const sensor of s.sensors) {
+                                    next[`${structureKey}-${sensor.id}`] = true;
+                                  }
+                                  return next;
+                                });
                               }
                               el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                             }
@@ -907,25 +1153,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                 </div>
               )}
             </div>
-            
-            <div className="w-full flex-1 min-w-0 space-y-8">
-              <CoverEditor cover={reportCover} onChange={setReportCover} />
-              {showTemplateEditor && (
-                <TemplateEditor template={template} onUpdate={setTemplate} />
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Preview Area */}
-        <div id="report-preview-section" className="w-full min-w-0 relative scroll-mt-32">
-          <div className="flex items-center gap-2 mb-4 print:hidden">
-            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <FileText className="w-5 h-5" />
-              报告预览区域
-            </h3>
-          </div>
-          <div ref={reportRef} className="bg-white p-8 rounded-xl border border-gray-100 min-h-screen shadow-sm print:p-0 print:shadow-none print:border-none">
+            <div ref={reportRef} className="bg-white p-8 rounded-xl border border-gray-100 min-h-screen shadow-sm print:p-0 print:shadow-none print:border-none flex-1">
             
             {/* Cover Page Preview */}
             <div className="flex flex-col items-center justify-between min-h-[1123px] py-20 bg-white mb-8 border-b-4 border-double border-gray-200 print:border-none break-after-page">
@@ -1092,6 +1320,18 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                         </div>
                                         
                                         <div className="flex items-center gap-3">
+                                          <label className="flex items-center gap-2 cursor-pointer select-none group" onClick={(e) => e.stopPropagation()}>
+                                            <input 
+                                              type="checkbox" 
+                                              className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500"
+                                              checked={!!denoiseStructures[structureKey]}
+                                              onChange={(e) => {
+                                                const checked = e.target.checked;
+                                                setDenoiseStructures(prev => ({ ...prev, [structureKey]: checked }));
+                                              }}
+                                            />
+                                            <span className="text-sm text-gray-700 group-hover:text-green-700">该结构去噪</span>
+                                          </label>
                                           {/* Per-structure AI Analysis Button */}
                                           {hasAiConfig && analysisConfig.enableGlobal && analysisConfig.enableAi && (
                                             <button
@@ -1125,7 +1365,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                           <div className="flex items-center gap-1 text-gray-400">
                                             <span className="text-sm">{isExpanded ? '收起' : '展开'}</span>
                                             {isExpanded ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
-                                          </div>
+                                        </div>
                                         </div>
                                       </summary>
                                       
@@ -1134,10 +1374,27 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                           {isExpanded && (
                                             structure.sensors.map((sensor) => {
+                                          const sensorKey = `${structureKey}-${sensor.id}`;
+                                          const displaySensor = getDisplaySensor(structureKey, sensor);
                                               return (
                                                 <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                                               <div className="flex items-center justify-between mb-2">
+                                                 <div className="text-sm font-medium text-gray-700">{sensor.name}</div>
+                                                 <label className="flex items-center gap-2 cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
+                                                   <input 
+                                                     type="checkbox" 
+                                                     className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500"
+                                                     checked={!!denoiseSensors[sensorKey]}
+                                                     onChange={(e) => {
+                                                       const checked = e.target.checked;
+                                                       setDenoiseSensors(prev => ({ ...prev, [sensorKey]: checked }));
+                                                     }}
+                                                   />
+                                                   <span className="text-xs text-gray-600">该测点去噪</span>
+                                                 </label>
+                                               </div>
                                                    <SensorChart 
-                                                     sensor={sensor} 
+                                                 sensor={displaySensor} 
                                                      color="#2563eb" 
                                                    />
                                                 </div>
@@ -1208,6 +1465,18 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                 </div>
                                 
                                 <div className="flex items-center gap-3">
+                                  <label className="flex items-center gap-2 cursor-pointer select-none group" onClick={(e) => e.stopPropagation()}>
+                                    <input 
+                                      type="checkbox" 
+                                      className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500"
+                                      checked={!!(denoiseStructures[structureKey] ?? true)}
+                                      onChange={(e) => {
+                                        const checked = e.target.checked;
+                                        setDenoiseStructures(prev => ({ ...prev, [structureKey]: checked }));
+                                      }}
+                                    />
+                                    <span className="text-sm text-gray-700 group-hover:text-green-700">该结构去噪</span>
+                                  </label>
                                   {/* Per-structure AI Analysis Button */}
                                   {hasAiConfig && analysisConfig.enableGlobal && analysisConfig.enableAi && (
                                     <button
@@ -1250,10 +1519,27 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                   {isExpanded && (
                                     structure.sensors.map((sensor) => {
+                                      const sensorKey = `${structureKey}-${sensor.id}`;
+                                      const displaySensor = getDisplaySensor(structureKey, sensor);
                                       return (
                                         <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                                           <div className="flex items-center justify-between mb-2">
+                                             <div className="text-sm font-medium text-gray-700">{sensor.name}</div>
+                                             <label className="flex items-center gap-2 cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
+                                               <input 
+                                                 type="checkbox" 
+                                                 className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500"
+                                                 checked={!!denoiseSensors[sensorKey]}
+                                                 onChange={(e) => {
+                                                   const checked = e.target.checked;
+                                                   setDenoiseSensors(prev => ({ ...prev, [sensorKey]: checked }));
+                                                 }}
+                                               />
+                                               <span className="text-xs text-gray-600">该测点去噪</span>
+                                             </label>
+                                           </div>
                                            <SensorChart 
-                                             sensor={sensor} 
+                                             sensor={displaySensor} 
                                              color="#2563eb" 
                                            />
                                         </div>
@@ -1346,6 +1632,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

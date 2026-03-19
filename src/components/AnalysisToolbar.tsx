@@ -11,6 +11,7 @@ export interface AnalysisConfig {
   enableTemperature: boolean;
   enableCrack: boolean;
   enableCorrelation: boolean;
+  enableDenoise?: boolean;
 }
 
 interface AnalysisToolbarProps {
@@ -21,9 +22,10 @@ interface AnalysisToolbarProps {
   onAiAnalyze?: () => void;
   isAiAnalyzing?: boolean;
   onAiStop?: () => void;
+  onOpenDenoiseConfig?: () => void;
 }
 
-export function AnalysisToolbar({ config, onChange, availableTypes, hasAiConfig, onAiAnalyze, isAiAnalyzing, onAiStop }: AnalysisToolbarProps) {
+export function AnalysisToolbar({ config, onChange, availableTypes, hasAiConfig, onAiAnalyze, isAiAnalyzing, onAiStop, onOpenDenoiseConfig }: AnalysisToolbarProps) {
   if (!config.enableGlobal) {
     return (
       <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 sticky top-16 z-10 shadow-sm">
@@ -59,6 +61,25 @@ export function AnalysisToolbar({ config, onChange, availableTypes, hasAiConfig,
       </div>
 
       <div className="flex items-center gap-4">
+        <label className="flex items-center gap-2 cursor-pointer select-none group">
+          <input 
+            type="checkbox" 
+            className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500"
+            checked={!!config.enableDenoise}
+            onChange={(e) => onChange('enableDenoise', e.target.checked)}
+          />
+          <div className="flex items-center gap-1.5 text-sm text-gray-700 group-hover:text-green-700 transition-colors">
+            <span>去噪点</span>
+          </div>
+        </label>
+        {!!config.enableDenoise && onOpenDenoiseConfig && (
+          <button
+            onClick={onOpenDenoiseConfig}
+            className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-full border border-green-200 transition-colors"
+          >
+            去噪配置
+          </button>
+        )}
         {/* AI Switch */}
         {hasAiConfig && (
           <div className="flex items-center gap-3">

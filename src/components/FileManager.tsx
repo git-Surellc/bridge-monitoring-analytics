@@ -47,6 +47,9 @@ export function FileManager() {
   // Filters
   const [filterMonth, setFilterMonth] = useState('');
   const [filterName, setFilterName] = useState('');
+  const [filterPeriodType, setFilterPeriodType] = useState<'all' | 'month' | 'quarter' | 'year'>('all');
+  const [filterQuarterYear, setFilterQuarterYear] = useState('');
+  const [filterQuarter, setFilterQuarter] = useState<'Q1' | 'Q2' | 'Q3' | 'Q4' | ''>('');
 
   const fetchFiles = async () => {
     setLoading(true);
@@ -189,9 +192,22 @@ export function FileManager() {
 
   // Filter logic
   const filteredFiles = files.filter(file => {
-    const matchMonth = filterMonth ? file.month.includes(filterMonth) : true;
+    const matchPeriod = (() => {
+      if (filterPeriodType === 'all') return true;
+      if (filterPeriodType === 'month') return filterMonth ? file.month.includes(filterMonth) : file.month.match(/^\d{4}-\d{2}$/) !== null;
+      if (filterPeriodType === 'quarter') {
+        if (filterQuarterYear && filterQuarter) return file.month === `${filterQuarterYear}${filterQuarter}`;
+        if (filterQuarterYear) return file.month.startsWith(filterQuarterYear) && file.month.includes('Q');
+        return file.month.includes('Q');
+      }
+      if (filterPeriodType === 'year') {
+        if (filterQuarterYear) return file.month === filterQuarterYear;
+        return /^\d{4}$/.test(file.month);
+      }
+      return true;
+    })();
     const matchName = filterName ? (file.structure_name?.toLowerCase().includes(filterName.toLowerCase()) || file.structure_id.includes(filterName)) : true;
-    return matchMonth && matchName;
+    return matchPeriod && matchName;
   });
 
   const handleSelectAll = (checked: boolean) => {
@@ -277,14 +293,62 @@ export function FileManager() {
         {activeTab === 'excel' ? (
           <div className="flex gap-2 items-center justify-between">
              <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm">
-               <Calendar className="w-4 h-4 text-gray-400" />
-               <input 
-                 type="month" 
-                 value={filterMonth}
-                 onChange={(e) => setFilterMonth(e.target.value)}
-                 className="text-sm border-none focus:ring-0 p-0 text-gray-600 w-32"
-                 placeholder="筛选月份"
-               />
+               <select
+                 value={filterPeriodType}
+                 onChange={(e) => setFilterPeriodType(e.target.value as any)}
+                 className="text-sm border-none focus:ring-0 p-0 text-gray-600"
+               >
+                 <option value="all">全部</option>
+                 <option value="month">月度</option>
+                 <option value="quarter">季度</option>
+                 <option value="year">年度</option>
+               </select>
+               <div className="w-px h-4 bg-gray-200 mx-2"></div>
+               {filterPeriodType === 'month' && (
+                 <>
+                   <Calendar className="w-4 h-4 text-gray-400" />
+                   <input 
+                     type="month" 
+                     value={filterMonth}
+                     onChange={(e) => setFilterMonth(e.target.value)}
+                     className="text-sm border-none focus:ring-0 p-0 text-gray-600 w-32"
+                     placeholder="筛选月份"
+                   />
+                 </>
+               )}
+               {filterPeriodType === 'quarter' && (
+                 <>
+                   <input 
+                     type="number"
+                     value={filterQuarterYear}
+                     onChange={(e) => setFilterQuarterYear(e.target.value)}
+                     className="text-sm border-none focus:ring-0 p-0 text-gray-600 w-20"
+                     placeholder="年份"
+                   />
+                   <select
+                     value={filterQuarter}
+                     onChange={(e) => setFilterQuarter(e.target.value as any)}
+                     className="text-sm border-none focus:ring-0 p-0 text-gray-600"
+                   >
+                     <option value="">季度</option>
+                     <option value="Q1">Q1</option>
+                     <option value="Q2">Q2</option>
+                     <option value="Q3">Q3</option>
+                     <option value="Q4">Q4</option>
+                   </select>
+                 </>
+               )}
+               {filterPeriodType === 'year' && (
+                 <>
+                   <input 
+                     type="number"
+                     value={filterQuarterYear}
+                     onChange={(e) => setFilterQuarterYear(e.target.value)}
+                     className="text-sm border-none focus:ring-0 p-0 text-gray-600 w-20"
+                     placeholder="年份"
+                   />
+                 </>
+               )}
                <div className="w-px h-4 bg-gray-200 mx-2"></div>
                <Search className="w-4 h-4 text-gray-400" />
                <input 
@@ -294,16 +358,22 @@ export function FileManager() {
                  className="text-sm border-none focus:ring-0 p-0 text-gray-600 w-32"
                  placeholder="结构名称/ID"
                />
-               {(filterMonth || filterName) && (
+               {(filterMonth || filterName || filterPeriodType !== 'all' || filterQuarterYear || filterQuarter) && (
                  <button 
-                   onClick={() => { setFilterMonth(''); setFilterName(''); }}
+                   onClick={() => { 
+                     setFilterMonth(''); 
+                     setFilterName(''); 
+                     setFilterPeriodType('all');
+                     setFilterQuarterYear('');
+                     setFilterQuarter('');
+                   }}
                    className="ml-2 text-gray-400 hover:text-gray-600"
                  >
                    <XCircle className="w-4 h-4" />
                  </button>
                )}
              </div>
-  
+ 
              <div className="flex gap-2">
                {selectedFiles.length > 0 && (
                  <button

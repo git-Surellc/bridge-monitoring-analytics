@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import * as XLSX from 'xlsx';
 import db from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -239,4 +240,251 @@ export const retryImport = async (month, structureId) => {
             .run('error', err.message, item.id);
       throw err;
   }
+};
+
+// Period-based import: quarter/year
+const fetchMonthExcelBuffer = async (month, type, id, token) => {
+  const url = `http://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/exportMonthData?month=${month}&structureType=${type}&structureId=${id}`;
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Authorization': token || ''
+  };
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    let errorDetail = '';
+    try {
+      const errorText = await response.text();
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorDetail = errorJson.msg || errorJson.message || JSON.stringify(errorJson);
+      } catch {
+        errorDetail = errorText.slice(0, 200);
+      }
+    } catch (e) {
+      errorDetail = '无法读取响应内容';
+    }
+    throw new Error(`请求失败 (${response.status}): ${errorDetail || response.statusText}`);
+  }
+  const buffer = await response.arrayBuffer();
+  // Check for small error response
+  if (buffer.byteLength < 500) {
+    const text = new TextDecoder().decode(buffer);
+    try {
+      const json = JSON.parse(text);
+      if (json.code && json.code !== 200) {
+        throw new Error(json.msg || 'API returned error JSON');
+      }
+    } catch {
+      // not JSON, assume valid
+    }
+  }
+  return Buffer.from(buffer);
+};
+
+const mergeMonthlyBuffersToWorkbook = (buffers) => {
+  const sheetsMap = new Map(); // name -> aoa rows
+  buffers.forEach((buf, idx) => {
+    try {
+      const wb = XLSX.read(buf, { type: 'buffer' });
+      wb.SheetNames.forEach((name) => {
+        const ws = wb.Sheets[name];
+        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        if (!aoa || aoa.length === 0) return;
+        if (!sheetsMap.has(name)) {
+          sheetsMap.set(name, aoa);
+        } else {
+          const existing = sheetsMap.get(name);
+          // Append rows excluding header
+          for (let i = 1; i < aoa.length; i++) {
+            existing.push(aoa[i]);
+          }
+        }
+      });
+    } catch (e) {
+      // Skip malformed buffer
+    }
+  });
+  const outWb = XLSX.utils.book_new();
+  for (const [name, aoa] of sheetsMap.entries()) {
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    XLSX.utils.book_append_sheet(outWb, ws, name);
+  }
+  return outWb;
+};
+
+const resolveImportFilePath = (filePath) => {
+  if (!filePath) return null;
+  if (path.isAbsolute(filePath)) return filePath;
+  return path.join(__dirname, '..', filePath);
+};
+
+const getCachedMonthlyExcelBuffer = (month, item) => {
+  const row = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ? AND structure_type = ?').get(month, item.id, item.type);
+  if (!row || row.status !== 'success' || !row.file_path) return null;
+  const p = resolveImportFilePath(row.file_path);
+  if (!p || !fs.existsSync(p)) return null;
+  return fs.readFileSync(p);
+};
+
+const monthsOfQuarter = (year, quarter) => {
+  const start = (quarter - 1) * 3 + 1;
+  return [start, start + 1, start + 2].map((m) => `${year}-${String(m).padStart(2, '0')}`);
+};
+
+export const startQuarterImport = (year, quarter, structures, token) => {
+  const key = `${year}Q${quarter}`;
+  if (activeTasks.has(key)) {
+    const t = activeTasks.get(key);
+    if (t.status === 'running') return;
+  }
+  const task = {
+    status: 'running',
+    progress: 0,
+    total: structures.length,
+    success: 0,
+    fail: 0,
+    logs: []
+  };
+  activeTasks.set(key, task);
+  (async () => {
+    try {
+      const months = monthsOfQuarter(year, quarter);
+      for (const item of structures) {
+        if (task.status === 'stopped') break;
+        const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ? AND structure_type = ?').get(key, item.id, item.type);
+        if (existing && existing.status === 'success' && existing.file_path && fs.existsSync(existing.file_path)) {
+          db.prepare('UPDATE imports SET structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .run(item.name, item.type, existing.id);
+          const downloadUrl = `/storage/excel/${path.basename(existing.file_path)}`;
+          task.success++;
+          task.progress++;
+          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'skipped', msg: `已存在: ${item.name}`, fromCache: true, downloadUrl });
+          continue;
+        }
+        try {
+          const bufs = [];
+          let cacheHits = 0;
+          for (const m of months) {
+            const cached = getCachedMonthlyExcelBuffer(m, item);
+            if (cached) {
+              bufs.push(cached);
+              cacheHits++;
+              continue;
+            }
+            const b = await fetchMonthExcelBuffer(m, item.type, item.id, token);
+            bufs.push(b);
+          }
+          const wb = mergeMonthlyBuffersToWorkbook(bufs);
+          const xbuf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+          const fileName = `${item.name}_${key}_${item.id}.xlsx`;
+          const filePath = path.join(EXCEL_DIR, fileName);
+          fs.writeFileSync(filePath, xbuf);
+          const downloadUrl = `/storage/excel/${fileName}`;
+          if (existing) {
+            db.prepare('UPDATE imports SET status = ?, file_path = ?, structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP, error_msg = NULL WHERE id = ?')
+              .run('success', filePath, item.name, item.type, existing.id);
+          } else {
+            db.prepare('INSERT INTO imports (month, structure_id, structure_name, structure_type, status, file_path) VALUES (?, ?, ?, ?, ?, ?)')
+              .run(key, item.id, item.name, item.type, 'success', filePath);
+          }
+          task.success++;
+          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'success', msg: `下载合并成功: ${item.name} (缓存命中 ${cacheHits}/${months.length})`, downloadUrl });
+        } catch (err) {
+          task.fail++;
+          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}` });
+          if (existing) {
+            db.prepare('UPDATE imports SET status = ?, error_msg = ?, structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+              .run('error', err.message, item.name, item.type, existing.id);
+          } else {
+            db.prepare('INSERT INTO imports (month, structure_id, structure_name, structure_type, status, error_msg) VALUES (?, ?, ?, ?, ?, ?)')
+              .run(key, item.id, item.name, item.type, 'error', err.message);
+          }
+        }
+        task.progress++;
+      }
+      if (task.status !== 'stopped') task.status = 'completed';
+    } catch (fatal) {
+      task.status = 'failed';
+      task.error = fatal.message;
+    }
+  })();
+};
+
+export const startYearImport = (year, structures, token) => {
+  const key = `${year}`;
+  if (activeTasks.has(key)) {
+    const t = activeTasks.get(key);
+    if (t.status === 'running') return;
+  }
+  const task = {
+    status: 'running',
+    progress: 0,
+    total: structures.length,
+    success: 0,
+    fail: 0,
+    logs: []
+  };
+  activeTasks.set(key, task);
+  (async () => {
+    try {
+      const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`);
+      for (const item of structures) {
+        if (task.status === 'stopped') break;
+        const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ? AND structure_type = ?').get(key, item.id, item.type);
+        if (existing && existing.status === 'success' && existing.file_path && fs.existsSync(existing.file_path)) {
+          db.prepare('UPDATE imports SET structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .run(item.name, item.type, existing.id);
+          const downloadUrl = `/storage/excel/${path.basename(existing.file_path)}`;
+          task.success++;
+          task.progress++;
+          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'skipped', msg: `已存在: ${item.name}`, fromCache: true, downloadUrl });
+          continue;
+        }
+        try {
+          const bufs = [];
+          let cacheHits = 0;
+          for (const m of months) {
+            const cached = getCachedMonthlyExcelBuffer(m, item);
+            if (cached) {
+              bufs.push(cached);
+              cacheHits++;
+              continue;
+            }
+            const b = await fetchMonthExcelBuffer(m, item.type, item.id, token);
+            bufs.push(b);
+          }
+          const wb = mergeMonthlyBuffersToWorkbook(bufs);
+          const xbuf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+          const fileName = `${item.name}_${key}_${item.id}.xlsx`;
+          const filePath = path.join(EXCEL_DIR, fileName);
+          fs.writeFileSync(filePath, xbuf);
+          const downloadUrl = `/storage/excel/${fileName}`;
+          if (existing) {
+            db.prepare('UPDATE imports SET status = ?, file_path = ?, structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP, error_msg = NULL WHERE id = ?')
+              .run('success', filePath, item.name, item.type, existing.id);
+          } else {
+            db.prepare('INSERT INTO imports (month, structure_id, structure_name, structure_type, status, file_path) VALUES (?, ?, ?, ?, ?, ?)')
+              .run(key, item.id, item.name, item.type, 'success', filePath);
+          }
+          task.success++;
+          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'success', msg: `下载合并成功: ${item.name} (缓存命中 ${cacheHits}/${months.length})`, downloadUrl });
+        } catch (err) {
+          task.fail++;
+          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}` });
+          if (existing) {
+            db.prepare('UPDATE imports SET status = ?, error_msg = ?, structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+              .run('error', err.message, item.name, item.type, existing.id);
+          } else {
+            db.prepare('INSERT INTO imports (month, structure_id, structure_name, structure_type, status, error_msg) VALUES (?, ?, ?, ?, ?, ?)')
+              .run(key, item.id, item.name, item.type, 'error', err.message);
+          }
+        }
+        task.progress++;
+      }
+      if (task.status !== 'stopped') task.status = 'completed';
+    } catch (fatal) {
+      task.status = 'failed';
+      task.error = fatal.message;
+    }
+  })();
 };

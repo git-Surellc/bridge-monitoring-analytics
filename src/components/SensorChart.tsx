@@ -63,6 +63,17 @@ export function SensorChart({ sensor, color = '#2563eb' }: SensorChartProps) {
     }
     return tick;
   };
+  
+  const formatTooltipLabel = (label: any) => {
+    if (typeof label === 'number' && label > 40000 && label < 60000) {
+      const date = new Date((label - 25569) * 86400 * 1000);
+      return format(date, 'yyyy-MM-dd HH:mm');
+    }
+    if (typeof label === 'string' && !isNaN(Date.parse(label))) {
+      return format(new Date(label), 'yyyy-MM-dd HH:mm');
+    }
+    return label;
+  };
 
   return (
     <div className="w-full h-[300px] bg-white rounded-lg p-4 border border-gray-100">
@@ -88,7 +99,7 @@ export function SensorChart({ sensor, color = '#2563eb' }: SensorChartProps) {
           />
           <Tooltip 
             contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-            labelFormatter={formatTick}
+            labelFormatter={formatTooltipLabel}
           />
           {/* legend removed per requirement */}
           <Line

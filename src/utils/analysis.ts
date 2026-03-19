@@ -13,6 +13,7 @@ export interface AnalysisConfig {
   enableCrack: boolean;
   enableCorrelation: boolean;
   enableAi: boolean;
+  enableDenoise?: boolean;
 }
 
 export interface DataPoint {
@@ -120,6 +121,43 @@ const std = (data: number[], avg?: number): number => {
   const m = avg ?? mean(data);
   const variance = data.reduce((a, b) => a + Math.pow(b - m, 2), 0) / (data.length - 1);
   return Math.sqrt(variance);
+};
+
+const median = (data: number[]): number => {
+  if (data.length === 0) return 0;
+  const arr = [...data].sort((a, b) => a - b);
+  const mid = Math.floor(arr.length / 2);
+  if (arr.length % 2 === 0) return (arr[mid - 1] + arr[mid]) / 2;
+  return arr[mid];
+};
+
+export interface DenoiseOptions {
+  maxDelta?: number;
+  min?: number;
+  max?: number;
+}
+
+export const denoiseData = (data: Array<{ time: string; value: number }>, options?: DenoiseOptions) => {
+  if (!data || data.length === 0) return data;
+  const maxDelta = options?.maxDelta;
+  const min = options?.min;
+  const max = options?.max;
+
+  if (maxDelta === undefined && min === undefined && max === undefined) return data;
+
+  const out: Array<{ time: string; value: number }> = [];
+  let lastKept: number | null = null;
+
+  for (const p of data) {
+    const v = p.value;
+    if (min !== undefined && v < min) continue;
+    if (max !== undefined && v > max) continue;
+    if (maxDelta !== undefined && lastKept !== null && Math.abs(v - lastKept) > maxDelta) continue;
+    out.push(p);
+    lastKept = v;
+  }
+
+  return out;
 };
 
 // Simple Linear Regression (Least Squares)

@@ -6,7 +6,7 @@ import db from './db.js';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { generateWordReport } from './report/generator.js';
-import { startImportTask, getImportStatus, retryImport, getActiveTask, stopImportTask } from './importer.js';
+import { startImportTask, getImportStatus, retryImport, getActiveTask, stopImportTask, startQuarterImport, startYearImport } from './importer.js';
 import { startBatchAnalysis, getBatchStatus, stopBatchAnalysis } from './ai/service.js';
 import { globalErrorHandler, aiRateLimiter, uploadTimeout } from './middleware.js';
 
@@ -14,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 8888;
 
+app.set('etag', false);
 app.use(cors());
 // Apply timeout for all requests, but especially useful for uploads
 app.use((req, res, next) => {
@@ -59,6 +60,38 @@ app.post('/api/import/start', async (req, res) => {
   }
 });
 
+// Start quarter import task
+app.post('/api/import/start-quarter', async (req, res) => {
+  const { year, quarter, structures } = req.body;
+  if (!year || !quarter || !structures || !Array.isArray(structures)) {
+    return res.status(400).json({ error: 'Invalid parameters' });
+  }
+  try {
+    const tokenRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('api_token');
+    const token = tokenRow ? tokenRow.value : null;
+    startQuarterImport(String(year), Number(quarter), structures, token);
+    res.json({ message: 'Quarter import task started', month: `${year}Q${quarter}` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Start year import task
+app.post('/api/import/start-year', async (req, res) => {
+  const { year, structures } = req.body;
+  if (!year || !structures || !Array.isArray(structures)) {
+    return res.status(400).json({ error: 'Invalid parameters' });
+  }
+  try {
+    const tokenRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('api_token');
+    const token = tokenRow ? tokenRow.value : null;
+    startYearImport(String(year), structures, token);
+    res.json({ message: 'Year import task started', month: `${year}` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Stop import task
 app.post('/api/import/stop', (req, res) => {
   const { month } = req.body;
@@ -90,6 +123,7 @@ app.get('/api/import/status', (req, res) => {
   const { month } = req.query;
   if (!month) return res.status(400).json({ error: 'Month is required' });
   
+  res.setHeader('Cache-Control', 'no-store');
   const status = getImportStatus(month);
   res.json(status);
 });

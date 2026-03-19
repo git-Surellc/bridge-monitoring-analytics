@@ -57,11 +57,40 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     const saved = localStorage.getItem('api_import_month');
     return saved || new Date().toISOString().slice(0, 7);
   });
+  const [periodType, setPeriodType] = useState<'month' | 'quarter' | 'year'>(() => {
+    const saved = localStorage.getItem('api_import_period_type');
+    return (saved === 'quarter' || saved === 'year') ? saved : 'month';
+  });
+  const [year, setYear] = useState(() => {
+    const saved = localStorage.getItem('api_import_year');
+    return saved || String(new Date().getFullYear());
+  });
+  const [quarter, setQuarter] = useState<number>(() => {
+    const saved = localStorage.getItem('api_import_quarter');
+    if (saved) return Number(saved);
+    const m = new Date().getMonth() + 1;
+    return Math.ceil(m / 3);
+  });
   
   // Persist month change
   useEffect(() => {
     localStorage.setItem('api_import_month', month);
   }, [month]);
+  useEffect(() => {
+    localStorage.setItem('api_import_period_type', periodType);
+  }, [periodType]);
+  useEffect(() => {
+    localStorage.setItem('api_import_year', year);
+  }, [year]);
+  useEffect(() => {
+    localStorage.setItem('api_import_quarter', String(quarter));
+  }, [quarter]);
+
+  const getPeriodKey = () => {
+    if (periodType === 'month') return month;
+    if (periodType === 'quarter') return `${year}Q${quarter}`;
+    return year;
+  };
 
   const [structureList, setStructureList] = useState<StructureItem[]>(() => {
     try {
@@ -150,9 +179,20 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
         if (res.ok) {
           const task = await res.json();
           // Only switch month if there is an ACTIVELY RUNNING task
-          if (task.month && task.month !== month && task.status === 'running') {
-            setMonth(task.month);
-            setIsProcessing(true); // Mark as processing so we can pick up logs
+          if (task.month && task.status === 'running') {
+            const mstr: string = task.month;
+            if (/^\d{4}-\d{2}$/.test(mstr)) {
+              setPeriodType('month');
+              setMonth(mstr);
+            } else if (/^\d{4}Q[1-4]$/.test(mstr)) {
+              setPeriodType('quarter');
+              setYear(mstr.slice(0, 4));
+              setQuarter(Number(mstr.slice(5)));
+            } else if (/^\d{4}$/.test(mstr)) {
+              setPeriodType('year');
+              setYear(mstr);
+            }
+            setIsProcessing(true);
           }
         }
       } catch (e) {
@@ -191,9 +231,11 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     checkStatus();
     
     // Poll every 3 seconds
-    const interval = setInterval(checkStatus, 3000);
+    const interval = setInterval(() => {
+      checkStatus();
+    }, 3000);
     return () => clearInterval(interval);
-  }, [month]); 
+  }, [month, periodType, year, quarter]); 
 
   const handleStop = async () => {
     if (!confirm('确定要停止当前导入任务吗？已完成的项目将保留。')) return;
@@ -202,7 +244,7 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
       const res = await fetch('/api/import/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month })
+        body: JSON.stringify({ month: getPeriodKey() })
       });
       if (!res.ok) throw new Error('停止失败');
       
@@ -215,7 +257,13 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
 
   const checkStatus = async () => {
     try {
-      const res = await fetch(`/api/import/status?month=${month}`);
+      const res = await fetch(`/api/import/status?month=${getPeriodKey()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
+      });
+      if (res.status === 304) return;
       if (!res.ok) return;
       
       const data = await res.json();
@@ -306,10 +354,19 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     processedIdsRef.current.clear();
     
     try {
-      const res = await fetch('/api/import/start', {
+      let url = '/api/import/start';
+      let body: any = { month, structures: structureList };
+      if (periodType === 'quarter') {
+        url = '/api/import/start-quarter';
+        body = { year, quarter, structures: structureList };
+      } else if (periodType === 'year') {
+        url = '/api/import/start-year';
+        body = { year, structures: structureList };
+      }
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month, structures: structureList })
+        body: JSON.stringify(body)
       });
       
       if (!res.ok) {
@@ -432,16 +489,73 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
       
       <div className={cn("grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 transition-opacity duration-300", !hasToken && "opacity-50 pointer-events-none")}>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">月份</label>
-          <input 
-            type="month" 
-            value={month} 
-            onChange={e => {
-              setMonth(e.target.value);
-              setIsProcessing(false);
-            }}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          />
+          <label className="block text-sm font-medium text-gray-700 mb-1">时间范围</label>
+          <div className="grid grid-cols-1 gap-2">
+            <div className="flex gap-2">
+              <select
+                value={periodType}
+                onChange={(e) => {
+                  const v = e.target.value as 'month' | 'quarter' | 'year';
+                  setPeriodType(v);
+                  setIsProcessing(false);
+                }}
+                className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              >
+                <option value="month">月度</option>
+                <option value="quarter">季度</option>
+                <option value="year">年度</option>
+              </select>
+              {periodType === 'month' && (
+                <input 
+                  type="month" 
+                  value={month} 
+                  onChange={e => {
+                    setMonth(e.target.value);
+                    setYear(e.target.value.slice(0,4));
+                    setIsProcessing(false);
+                  }}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              )}
+              {periodType === 'quarter' && (
+                <>
+                  <input
+                    type="number"
+                    min={1900}
+                    max={2100}
+                    value={year}
+                    onChange={(e) => { setYear(e.target.value); setIsProcessing(false); }}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="年份"
+                  />
+                  <select
+                    value={quarter}
+                    onChange={(e) => { setQuarter(Number(e.target.value)); setIsProcessing(false); }}
+                    className="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  >
+                    <option value={1}>一季度</option>
+                    <option value={2}>二季度</option>
+                    <option value={3}>三季度</option>
+                    <option value={4}>四季度</option>
+                  </select>
+                </>
+              )}
+              {periodType === 'year' && (
+                <input
+                  type="number"
+                  min={1900}
+                  max={2100}
+                  value={year}
+                  onChange={(e) => { setYear(e.target.value); setIsProcessing(false); }}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="年份"
+                />
+              )}
+            </div>
+            <div className="text-xs text-gray-500">
+              当前选择：{getPeriodKey()}
+            </div>
+          </div>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">结构物列表 Excel</label>
