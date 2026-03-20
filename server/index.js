@@ -9,6 +9,7 @@ import { generateWordReport } from './report/generator.js';
 import { startImportTask, getImportStatus, retryImport, getActiveTask, stopImportTask, startQuarterImport, startYearImport } from './importer.js';
 import { startBatchAnalysis, getBatchStatus, stopBatchAnalysis } from './ai/service.js';
 import { globalErrorHandler, aiRateLimiter, uploadTimeout } from './middleware.js';
+import { createAuthMiddleware, verifyServiceToken } from './directus-auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -16,6 +17,10 @@ const PORT = process.env.PORT || 8888;
 
 app.set('etag', false);
 app.use(cors());
+
+// 初始化 Directus 认证
+const authMiddleware = createAuthMiddleware(process.env.AUTH_MODE || 'optional');
+console.log('[Server] 认证模式:', process.env.AUTH_MODE || 'optional');
 // Apply timeout for all requests, but especially useful for uploads
 app.use((req, res, next) => {
   // Default timeout 2 minutes
@@ -31,6 +36,9 @@ app.use(express.json({ limit: '50mb' }));
 
 // Apply Rate Limiting to AI routes
 app.use('/api/ai', aiRateLimiter);
+
+// Apply Directus Authentication to API routes
+app.use('/api', authMiddleware);
 
 // Ensure storage directories exist
 const STORAGE_DIR = path.join(__dirname, '../storage');
@@ -202,8 +210,10 @@ app.post('/api/files/batch-delete', (req, res) => {
 app.get('/api/files', (req, res) => {
   try {
     const files = db.prepare('SELECT * FROM imports ORDER BY created_at DESC').all();
-    res.json(files);
+    console.log('Files count:', files.length);
+    res.json({ imports: files });
   } catch (error) {
+    console.error('Error fetching files:', error);
     res.status(500).json({ error: error.message });
   }
 });

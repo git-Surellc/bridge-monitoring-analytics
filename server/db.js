@@ -1,12 +1,20 @@
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '../database.sqlite');
+
+// Use DATABASE_PATH from environment or default to relative path
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, '../database.sqlite');
+console.log('Database path:', dbPath);
+
 const db = new Database(dbPath);
 
 // Initialize tables
