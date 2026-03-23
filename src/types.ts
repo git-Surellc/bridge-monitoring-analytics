@@ -10,6 +10,8 @@ export interface SensorData {
   unit?: string;
   deviceType?: string;
   sheetType?: string; // Add sheetType for Excel sheet name categorization
+  sensorType?: string;
+  alarmThreshold?: number;
   data: DataPoint[];
   stats?: {
     min: number;
@@ -66,4 +68,8 @@ export interface LogEntry {
   msg: string;
   downloadUrl?: string;
   fromCache?: boolean;
+  ts?: number;
+  groupKey?: string;
+  isFinal?: boolean;
+  detail?: string;
 }

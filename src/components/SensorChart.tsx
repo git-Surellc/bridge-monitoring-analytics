@@ -27,6 +27,7 @@ export function SensorChart({ sensor, color = '#2563eb' }: SensorChartProps) {
   };
 
   const getSensorType = (s: SensorData) => {
+    if (s.sensorType && typeof s.sensorType === 'string') return s.sensorType;
     const name = (s.name || '').toLowerCase();
     const sheetType = (s.sheetType || '').toLowerCase();
     const text = `${name} ${sheetType}`;
@@ -39,6 +40,7 @@ export function SensorChart({ sensor, color = '#2563eb' }: SensorChartProps) {
   };
 
   const getUnit = (s: SensorData) => {
+    if (s.unit && typeof s.unit === 'string' && s.unit.trim()) return s.unit.trim();
     const type = getSensorType(s);
     if (type === 'inclination') return '°';
     if (type === 'acceleration') return 'mg';
@@ -48,6 +50,28 @@ export function SensorChart({ sensor, color = '#2563eb' }: SensorChartProps) {
   };
 
   const unit = getUnit(sensor);
+
+  const formatSensorTitle = (s: SensorData) => {
+    const deviceName = String(s.sheetType || s.deviceType || '').trim();
+    const rawName = String(s.name || '').trim();
+    if (!deviceName && !rawName) return '';
+
+    let location = rawName;
+    let inner = '';
+    const match = rawName.match(/^(.*)[(（](.*)[)）]$/);
+    if (match) {
+      location = match[1].trim();
+      inner = match[2].trim();
+    }
+
+    const directionMatch = inner.match(/[XYZ]/i);
+    const direction = directionMatch ? directionMatch[0].toUpperCase() : '';
+    const bracket = [location, direction].filter(Boolean).join(' ');
+
+    if (deviceName && bracket) return `${deviceName}（${bracket}）`;
+    if (deviceName) return deviceName;
+    return bracket || rawName;
+  };
 
   // Helper to format tick
   const formatTick = (tick: any) => {
@@ -78,7 +102,7 @@ export function SensorChart({ sensor, color = '#2563eb' }: SensorChartProps) {
   return (
     <div className="w-full h-[300px] bg-white rounded-lg p-4 border border-gray-100">
       <h4 className="text-sm font-medium text-gray-700 mb-4 text-center">
-        {sensor.name} 时程曲线（单位：{unit}）
+        {formatSensorTitle(sensor)} 时程曲线（单位：{unit}）
       </h4>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
@@ -100,6 +124,11 @@ export function SensorChart({ sensor, color = '#2563eb' }: SensorChartProps) {
           <Tooltip 
             contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
             labelFormatter={formatTooltipLabel}
+            formatter={(value: any) => {
+              const n = Number(value);
+              if (!Number.isFinite(n)) return [String(value ?? ''), ''];
+              return [`${n.toFixed(3)} ${unit}`, ''];
+            }}
           />
           {/* legend removed per requirement */}
           <Line

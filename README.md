@@ -4,6 +4,17 @@
 
 ## 📅 更新日志 (Changelog)
 
+### v1.3.13 (2026-03-23 v24)
+*   **✨ 新功能**：分析工具条新增“指标选择”，按 Excel Sheet（设备名称）勾选参与分析与导出的设备（如不分析温度类设备）。
+*   **📝 报告优化**：页面报告预览与 Word 导出统一设备标题格式：`Sheet名称（安装位置 方向）`。
+*   **🐛 修复**：当未选择任何设备时，导出 Word 会提示先至少选择一个设备。
+
+### v1.3.12 (2026-03-23 v23)
+*   **✨ 新功能**：API 批量导入日志增强：按结构/月份显示进度，支持完成后自动折叠，并可查看平台 API 回复内容。
+*   **📝 报告优化**：Word 报告中每个传感器时程图下方增加文字总结（报警阈值+单位）。
+*   **✨ 优化**：预览与 Word 导出所有数值统一保留 3 位小数。
+*   **✨ 优化**：预览与 Word 导出按分组对结构/设备名称自动编号：结构（1），设备 1）。
+
 ### v1.3.11 (2026-03-19 v22)
 *   **✨ 新功能**：新增“去噪配置”窗口，按指标类型配置最大变化量、上下限，并显示对应单位。
 *   **🐛 修复**：修复单结构/单测点去噪开关在非分组视图下不生效的问题。
@@ -193,13 +204,13 @@
     ```bash
     node server/index.js
     ```
-    *   服务运行在 `http://localhost:8888`
+    *   服务运行在 `http://localhost:8008`
 
 3.  **启动前端开发服务器** (另开终端)：
     ```bash
     npm run dev
     ```
-    *   访问 `http://localhost:3000`
+    *   默认访问 `http://localhost:3008`（若端口占用会自动递增）
 
 ### 部署 (Deployment)
 
@@ -208,21 +219,21 @@
 1.  **构建并启动容器**：
     ```bash
     docker build -t structure-analytics .
-    docker run -d -p 8888:8888 --name structure-app structure-analytics
+    docker run -d -p 8008:8008 --name structure-app structure-analytics
     ```
 
 2.  **访问应用**：
-    打开浏览器访问 `http://<服务器IP>:8888`
+    打开浏览器访问 `http://<服务器IP>:8008`
 
 ### 阿里云部署建议
 
 1.  在阿里云 ECS 上安装 Docker。
 2.  上传代码或通过 Git 拉取。
 3.  运行上述 Docker 命令。
-4.  配置安全组规则，开放 `8888` 端口 (或通过 Nginx 反向代理到 80/443)。
+4.  配置安全组规则，开放 `8008` 端口 (或通过 Nginx 反向代理到 80/443)。
 5.  **数据持久化**：建议挂载宿主机目录以保存数据库和文件：
     ```bash
-    docker run -d -p 8888:8888 \
+    docker run -d -p 8008:8008 \
       -v $(pwd)/storage:/app/storage \
       -v $(pwd)/database.sqlite:/app/database.sqlite \
       --name structure-app structure-analytics

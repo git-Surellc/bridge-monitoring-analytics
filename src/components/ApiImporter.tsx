@@ -106,9 +106,74 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
   const [debugMode, setDebugMode] = useState(true);
   const [progress, setProgress] = useState({ current: 0, total: 0, success: 0, fail: 0 });
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const prevGroupDoneRef = useRef<Record<string, boolean>>({});
   
   // Track processed IDs to avoid re-parsing same file multiple times
   const processedIdsRef = useRef<Set<string>>(new Set());
+
+  const makeGroupKey = (id: string, type?: string) => `${id}-${type || '1'}`;
+
+  const getTypeLabel = (type?: string) => {
+    if (type === '2') return '隧道';
+    if (type === '3') return '边坡';
+    return '结构';
+  };
+
+  const groupedLogs = React.useMemo(() => {
+    const groups = new Map<string, { groupKey: string; id: string; type?: string; name?: string; firstIndex: number; entries: LogEntry[] }>();
+    logs.forEach((log, index) => {
+      const groupKey = log.groupKey || makeGroupKey(log.id, log.type);
+      const existing = groups.get(groupKey);
+      if (!existing) {
+        groups.set(groupKey, { groupKey, id: log.id, type: log.type, name: log.name, firstIndex: index, entries: [log] });
+      } else {
+        existing.entries.push(log);
+        if (!existing.name && log.name) existing.name = log.name;
+      }
+    });
+
+    return Array.from(groups.values())
+      .sort((a, b) => a.firstIndex - b.firstIndex)
+      .map((g) => {
+        const finalEntry = [...g.entries].reverse().find((e) => e.isFinal) || g.entries[g.entries.length - 1];
+        const isDone = !!finalEntry && (finalEntry.isFinal || finalEntry.status === 'success' || finalEntry.status === 'error' || finalEntry.status === 'skipped');
+        const status = finalEntry?.status || 'info';
+        return { ...g, finalEntry, isDone, status };
+      });
+  }, [logs]);
+
+  useEffect(() => {
+    if (logs.length === 0) {
+      setExpandedGroups({});
+      prevGroupDoneRef.current = {};
+      return;
+    }
+
+    const doneMap: Record<string, boolean> = {};
+    groupedLogs.forEach((g) => {
+      doneMap[g.groupKey] = g.isDone;
+    });
+
+    setExpandedGroups((prev) => {
+      const next = { ...prev };
+      for (const g of groupedLogs) {
+        const wasDone = prevGroupDoneRef.current[g.groupKey];
+        const isDone = doneMap[g.groupKey];
+
+        if (next[g.groupKey] === undefined) {
+          next[g.groupKey] = !isDone;
+          continue;
+        }
+
+        if (isDone && wasDone === false) {
+          next[g.groupKey] = false;
+        }
+      }
+      prevGroupDoneRef.current = doneMap;
+      return next;
+    });
+  }, [logs, groupedLogs]);
   
   // Helper to parse logs
   const processLogs = async (newLogs: LogEntry[]) => {
@@ -685,50 +750,122 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
           </div>
           
           <div className="max-h-60 overflow-y-auto space-y-2 text-xs border border-gray-100 rounded-lg p-2 bg-gray-50">
-            {logs.map((log, i) => (
-              <div key={i} className={cn(
-                "flex items-center gap-2", 
-                log.status === 'success' ? 'text-green-700' : 
-                log.status === 'error' ? 'text-red-700' : 
-                log.status === 'warning' ? 'text-amber-600' : 'text-gray-600'
-              )}>
-                {log.status === 'success' && <CheckCircle className="w-3 h-3 shrink-0" />}
-                {log.status === 'error' && <AlertCircle className="w-3 h-3 shrink-0" />}
-                {log.status === 'warning' && <StopCircle className="w-3 h-3 shrink-0" />}
-                {log.status === 'info' && <div className="w-3 h-3 shrink-0" />}
-                {log.status === 'skipped' && <div className="w-3 h-3 shrink-0 text-gray-400">⚡</div>}
-                
-                <span className="font-mono shrink-0">{log.id}:</span>
-                <span className="break-all mr-2">{log.msg}</span>
-                
-                <div className="ml-auto flex items-center gap-2 shrink-0">
-                  {log.status === 'error' && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        // Need item details for retry. Use log details or find in structureList
-                        const item = structureList.find(s => s.id === log.id);
-                        if (item) handleRetry(item);
-                      }}
-                      className="text-blue-600 hover:text-blue-800 hover:underline px-2 py-0.5 rounded border border-blue-200 bg-blue-50 hover:bg-blue-100 transition-colors"
-                    >
-                      重试
-                    </button>
+            {groupedLogs.map((group) => {
+              const titleName = (() => {
+                const fromExcel = structureList.find((s) => makeGroupKey(s.id, s.type) === group.groupKey)?.name;
+                return fromExcel || group.name || group.id;
+              })();
+
+              const summaryStatus = group.status;
+              const summaryMsg = group.finalEntry?.msg || '处理中...';
+
+              const getStatusIcon = (status: LogEntry['status']) => {
+                if (status === 'success') return <CheckCircle className="w-3 h-3 shrink-0" />;
+                if (status === 'error') return <AlertCircle className="w-3 h-3 shrink-0" />;
+                if (status === 'warning') return <StopCircle className="w-3 h-3 shrink-0" />;
+                if (status === 'skipped') return <div className="w-3 h-3 shrink-0 text-gray-400">⚡</div>;
+                return <div className="w-3 h-3 shrink-0" />;
+              };
+
+              const summaryTextColor =
+                summaryStatus === 'success' ? 'text-green-700' :
+                summaryStatus === 'error' ? 'text-red-700' :
+                summaryStatus === 'warning' ? 'text-amber-600' : 'text-gray-700';
+
+              const open = expandedGroups[group.groupKey] ?? !group.isDone;
+              const finalDownloadUrl = group.finalEntry?.downloadUrl;
+
+              return (
+                <details
+                  key={group.groupKey}
+                  open={open}
+                  onToggle={(e) => {
+                    const el = e.currentTarget as HTMLDetailsElement;
+                    setExpandedGroups((prev) => ({ ...prev, [group.groupKey]: el.open }));
+                  }}
+                  className={cn(
+                    "rounded-md border border-gray-200 bg-white",
+                    group.isDone ? "opacity-100" : "border-blue-200"
                   )}
-                  {log.downloadUrl && (
-                    <a 
-                      href={log.downloadUrl}
-                      download
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-green-600 hover:text-green-800 hover:underline px-2 py-0.5"
-                    >
-                      <Download className="w-3 h-3" />
-                    </a>
-                  )}
-                </div>
-              </div>
-            ))}
+                >
+                  <summary className={cn("cursor-pointer select-none px-2 py-1.5 flex items-center gap-2 [&::-webkit-details-marker]:hidden [list-style:none]", summaryTextColor)}>
+                    {getStatusIcon(summaryStatus)}
+                    <span className="font-mono shrink-0">{group.id}</span>
+                    <span className="shrink-0 text-gray-500">({getTypeLabel(group.type)})</span>
+                    <span className="shrink-0 text-gray-900 truncate max-w-[18rem]">{titleName}</span>
+                    <span className="text-gray-400">-</span>
+                    <span className="text-gray-700 break-all">{summaryMsg}</span>
+                    <span className="ml-auto text-gray-400 shrink-0">{group.entries.length} 条</span>
+                  </summary>
+
+                  <div className="px-2 pb-2 pt-1 space-y-1">
+                    {group.entries.map((log, i) => {
+                      const lineTextColor =
+                        log.status === 'success' ? 'text-green-700' :
+                        log.status === 'error' ? 'text-red-700' :
+                        log.status === 'warning' ? 'text-amber-600' : 'text-gray-600';
+
+                      const showRetry = log.status === 'error' && (group.finalEntry?.isFinal || group.isDone);
+                      const retryItem = structureList.find((s) => makeGroupKey(s.id, s.type) === group.groupKey) || structureList.find((s) => s.id === group.id);
+
+                      return (
+                        <div key={i} className={cn("flex items-start gap-2 pl-4", lineTextColor)}>
+                          <div className="pt-0.5">{getStatusIcon(log.status)}</div>
+                          <div className="min-w-0 flex-1">
+                            <div className="break-all">{log.msg}</div>
+                            {debugMode && log.detail && (
+                              <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-4 text-gray-500 bg-gray-50 border border-gray-100 rounded p-2">{log.detail}</pre>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {showRetry && retryItem && (
+                              <button
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleRetry(retryItem);
+                                }}
+                                className="text-blue-600 hover:text-blue-800 hover:underline px-2 py-0.5 rounded border border-blue-200 bg-blue-50 hover:bg-blue-100 transition-colors"
+                              >
+                                重试
+                              </button>
+                            )}
+                            {log.downloadUrl && (
+                              <a
+                                href={log.downloadUrl}
+                                download
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-green-600 hover:text-green-800 hover:underline px-2 py-0.5"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Download className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {finalDownloadUrl && !group.entries.some((e) => e.downloadUrl) && (
+                      <div className="flex items-center gap-2 pl-4 text-gray-600">
+                        <div className="w-3 h-3 shrink-0" />
+                        <a
+                          href={finalDownloadUrl}
+                          download
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-green-600 hover:text-green-800 hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          下载
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
           </div>
         </div>
       )}

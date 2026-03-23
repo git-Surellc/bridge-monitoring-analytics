@@ -12,7 +12,7 @@ import { globalErrorHandler, aiRateLimiter, uploadTimeout } from './middleware.j
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 8888;
+const PORT = process.env.PORT || 8008;
 
 app.set('etag', false);
 app.use(cors());

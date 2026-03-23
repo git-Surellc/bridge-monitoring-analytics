@@ -53,6 +53,9 @@ const KEYWORDS = {
 };
 
 const getSensorType = (sensor) => {
+  if (sensor?.sensorType && typeof sensor.sensorType === 'string' && sensor.sensorType.trim()) {
+    return sensor.sensorType.trim();
+  }
   const name = (sensor.name || '').toLowerCase();
   const sheetType = (sensor.sheetType || '').toLowerCase();
   const text = `${name} ${sheetType}`;
@@ -67,6 +70,9 @@ const getSensorType = (sensor) => {
 };
 
 const getUnit = (sensor) => {
+  if (sensor?.unit && typeof sensor.unit === 'string' && sensor.unit.trim()) {
+    return sensor.unit.trim();
+  }
   const type = getSensorType(sensor);
   if (type === 'inclination') return '°';
   if (type === 'acceleration') return 'mg';
@@ -75,15 +81,62 @@ const getUnit = (sensor) => {
   return 'mm';
 };
 
-// Helper to format sensor title (ported from frontend)
-const formatSensorTitle = (name) => {
-  const match = name.match(/^(.*)[(（](.*)[)）]$/);
-  if (match) {
-    const title = match[1].trim();
-    const subtitle = match[2].trim();
-    return `${subtitle}（${title}）`;
+const formatNumber3 = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value ?? '');
+  return n.toFixed(3);
+};
+
+const SENSOR_ALARM_THRESHOLD = {
+  displacement: 10,
+  inclination: 2,
+  acceleration: 50,
+  temperature: 5,
+  crack: 1,
+  default: 10,
+};
+
+const getAlarmThreshold = (sensor) => {
+  if (sensor?.alarmThreshold !== undefined && sensor?.alarmThreshold !== null) {
+    const n = Number(sensor.alarmThreshold);
+    if (Number.isFinite(n)) return n;
   }
-  return name;
+  const type = getSensorType(sensor) || 'default';
+  return SENSOR_ALARM_THRESHOLD[type] ?? SENSOR_ALARM_THRESHOLD.default;
+};
+
+const getAmplitude = (sensor) => {
+  if (sensor?.stats?.amplitude !== undefined && sensor?.stats?.amplitude !== null) {
+    const n = Number(sensor.stats.amplitude);
+    if (Number.isFinite(n)) return n;
+  }
+  const values = (sensor?.data || []).map((d) => Number(d.value)).filter((n) => Number.isFinite(n));
+  if (values.length === 0) return null;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  return max - min;
+};
+
+const formatSensorTitle = (sensor) => {
+  const deviceName = String(sensor?.sheetType || sensor?.deviceType || '').trim();
+  const rawName = String(sensor?.name || '').trim();
+  if (!deviceName && !rawName) return '';
+
+  let location = rawName;
+  let inner = '';
+  const match = rawName.match(/^(.*)[(（](.*)[)）]$/);
+  if (match) {
+    location = match[1].trim();
+    inner = match[2].trim();
+  }
+
+  const directionMatch = inner.match(/[XYZ]/i);
+  const direction = directionMatch ? directionMatch[0].toUpperCase() : '';
+  const bracket = [location, direction].filter(Boolean).join(' ');
+
+  if (deviceName && bracket) return `${deviceName}（${bracket}）`;
+  if (deviceName) return deviceName;
+  return bracket || rawName;
 };
 
 // Helper to calculate linear regression
@@ -108,7 +161,7 @@ const calculateLinearRegression = (points) => {
   const slope = (n * sumXY - sumX * sumY) / denominator;
   const intercept = (sumY - slope * sumX) / n;
   
-  const equation = `y = ${slope.toFixed(4)}x ${intercept >= 0 ? '+' : ''}${intercept.toFixed(4)}`;
+  const equation = `y = ${formatNumber3(slope)}x ${intercept >= 0 ? '+' : ''}${formatNumber3(intercept)}`;
 
   return { slope, intercept, equation };
 };
@@ -161,7 +214,7 @@ export const generateChartImage = (sensor) => {
     const option = {
       animation: false,
       title: {
-        text: `${formatSensorTitle(sensor.name)} 时程曲线（单位：${unit}）`,
+        text: `${formatSensorTitle(sensor)} 时程曲线（单位：${unit}）`,
         left: 'center',
         textStyle: { fontSize: 16 }
       },
@@ -455,7 +508,7 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
              
              const formatRate = (online, total) => {
                 if (!total || total === 0) return '-';
-                return `${Math.round((online / total) * 100)}% (${online}/${total})`;
+                return `${((online / total) * 100).toFixed(3)}% (${online}/${total})`;
              };
 
              tableRows.push(
@@ -481,15 +534,16 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
         case 'chart_analysis':
           docChildren.push(new Paragraph({ text: section.title, heading: HeadingLevel.HEADING_1 }));
           
-          const processBridge = async (bridge) => {
+          const processBridge = async (bridge, structureNo) => {
              docChildren.push(
                new Paragraph({
-                 text: bridge.name,
+                 text: `（${structureNo}）${bridge.name}`,
                  heading: HeadingLevel.HEADING_2,
                  spacing: { before: 200, after: 100 },
                })
              );
 
+             let sensorNo = 1;
              for (const sensor of bridge.sensors) {
                try {
                  // Report progress
@@ -505,8 +559,8 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                  
                  if (imageBuffer) {
                    docChildren.push(
-                     new Paragraph({
-                       text: formatSensorTitle(sensor.name),
+                      new Paragraph({
+                        text: `${sensorNo}）${formatSensorTitle(sensor)}`,
                        heading: HeadingLevel.HEADING_3,
                        spacing: { before: 150, after: 80 },
                      })
@@ -526,13 +580,16 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                          }),
                        ],
                        alignment: AlignmentType.CENTER,
-                       spacing: { after: 200 },
+                       spacing: { after: 80 },
                      })
                    );
+
                  }
 
                  // Add Analysis Summary
                  if (sensor.stats) {
+                   const unit = getUnit(sensor);
+                   const threshold = getAlarmThreshold(sensor);
                     docChildren.push(
                       new Paragraph({
                         text: "分析摘要",
@@ -542,21 +599,29 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                       new Paragraph({
                         children: [
                            new TextRun({ text: "最大值: ", bold: true }),
-                           new TextRun({ text: `${sensor.stats.max} (时间: ${sensor.stats.maxTime})` }),
+                           new TextRun({ text: `${formatNumber3(sensor.stats.max)} (时间: ${sensor.stats.maxTime})` }),
                         ],
                         spacing: { after: 50 },
                       }),
                       new Paragraph({
                         children: [
                            new TextRun({ text: "最小值: ", bold: true }),
-                           new TextRun({ text: `${sensor.stats.min} (时间: ${sensor.stats.minTime})` }),
+                           new TextRun({ text: `${formatNumber3(sensor.stats.min)} (时间: ${sensor.stats.minTime})` }),
                         ],
                         spacing: { after: 50 },
                       }),
                       new Paragraph({
                         children: [
-                           new TextRun({ text: "振幅/变化量: ", bold: true }),
-                           new TextRun({ text: `${sensor.stats.amplitude}` }),
+                           new TextRun({ text: "变化量: ", bold: true }),
+                           new TextRun({ text: `${formatNumber3(sensor.stats.amplitude)}` }),
+                        ],
+                        spacing: { after: 50 },
+                      }),
+                      new Paragraph({
+                        children: [
+                          new TextRun({
+                            text: `报警阈值为${formatNumber3(threshold)}${unit}，数值在允许范围内`,
+                          }),
                         ],
                         spacing: { after: 50 },
                       }),
@@ -565,13 +630,16 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                           new Paragraph({
                             children: [
                                new TextRun({ text: "平均值: ", bold: true }),
-                               new TextRun({ text: `${sensor.stats.mean}` }),
+                               new TextRun({ text: `${formatNumber3(sensor.stats.mean)}` }),
                             ],
                             spacing: { after: 200 },
                           })
                         ] 
                         : [])
                     );
+                 }
+                 if (imageBuffer) {
+                   sensorNo++;
                  }
                } catch (err) {
                  console.error(`Error generating chart for sensor ${sensor.id}:`, err);
@@ -653,8 +721,8 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                    docChildren.push(
                      new Paragraph({
                        children: [
-                         new TextRun({ text: `相关系数 (Pearson): ${Number(corr.correlation).toFixed(4)}`, bold: true }),
-                         new TextRun({ text: `\t显著性 (P-Value): ${Number(corr.pValue).toFixed(4)} (${corr.isSignificant ? '显著' : '不显著'})` }),
+                         new TextRun({ text: `相关系数 (Pearson): ${formatNumber3(corr.correlation)}`, bold: true }),
+                         new TextRun({ text: `\t显著性 (P-Value): ${formatNumber3(corr.pValue)} (${corr.isSignificant ? '显著' : '不显著'})` }),
                        ],
                        spacing: { after: 50 },
                      }),
@@ -714,22 +782,22 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                       if (quality) {
                          const parts = [];
                          if (quality.mean !== undefined && quality.mean !== null && Number.isFinite(Number(quality.mean))) {
-                           parts.push(`均值: ${Number(quality.mean).toFixed(4)}`);
+                           parts.push(`均值: ${formatNumber3(quality.mean)}`);
                          }
-                         parts.push(`缺失率: ${Number(quality.missingRate).toFixed(4)}%`, `异常点: ${quality.outlierCount}`);
+                         parts.push(`缺失率: ${formatNumber3(quality.missingRate)}%`, `异常点: ${quality.outlierCount}`);
                          details.push(new Paragraph({ text: `【数据质量】${parts.join(', ')}` }));
                       }
                       if (trend) {
-                         details.push(new Paragraph({ text: `【趋势分析】斜率: ${Number(trend.slope).toFixed(4)}, R²: ${Number(trend.rSquared).toFixed(4)}, 趋势: ${trend.trendDesc}` }));
+                         details.push(new Paragraph({ text: `【趋势分析】斜率: ${formatNumber3(trend.slope)}, R²: ${formatNumber3(trend.rSquared)}, 趋势: ${trend.trendDesc}` }));
                       }
                       if (deformation) {
-                         details.push(new Paragraph({ text: `【变形分析】极差: ${Number(deformation.rangeValue).toFixed(4)}, 周期: ${deformation.periodicFeatures.mainPeriods.join(', ') || '无'}` }));
+                         details.push(new Paragraph({ text: `【变形分析】极差: ${formatNumber3(deformation.rangeValue)}, 周期: ${deformation.periodicFeatures.mainPeriods.join(', ') || '无'}` }));
                       }
                       if (acceleration) {
-                         details.push(new Paragraph({ text: `【振动分析】PGA: ${Number(acceleration.pga).toFixed(4)}, 主频: ${Number(acceleration.naturalFreq).toFixed(4)}Hz (${acceleration.isFreqAbnormal ? '异常' : '正常'})` }));
+                         details.push(new Paragraph({ text: `【振动分析】PGA: ${formatNumber3(acceleration.pga)}, 主频: ${formatNumber3(acceleration.naturalFreq)}Hz (${acceleration.isFreqAbnormal ? '异常' : '正常'})` }));
                       }
                       if (crack) {
-                         details.push(new Paragraph({ text: `【裂缝分析】当前宽度: ${Number(crack.maxWidth).toFixed(4)}mm, 7日预测: ${Number(crack.predictedWidth7d).toFixed(4)}mm, 风险: ${crack.riskLevel}` }));
+                         details.push(new Paragraph({ text: `【裂缝分析】当前宽度: ${formatNumber3(crack.maxWidth)}mm, 7日预测: ${formatNumber3(crack.predictedWidth7d)}mm, 风险: ${crack.riskLevel}` }));
                       }
 
                       tableRows.push(
@@ -784,13 +852,17 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                       spacing: { before: 400, after: 200 },
                    })
                 );
+                let structureNo = 1;
                 for (const bridge of group.structures) {
-                   await processBridge(bridge);
+                   await processBridge(bridge, structureNo);
+                   structureNo++;
                 }
              }
           } else {
+             let structureNo = 1;
              for (const bridge of bridges) {
-                await processBridge(bridge);
+                await processBridge(bridge, structureNo);
+                structureNo++;
              }
           }
           

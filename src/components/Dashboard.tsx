@@ -50,11 +50,6 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     return sortStructuresByUserOrder(structures, customOrder || '');
   }, [structures, customOrder]);
 
-  const structureGroups = React.useMemo(() => {
-    if (!customGroups || !customGroups.trim()) return null;
-    return groupStructures(processedStructures, customGroups);
-  }, [processedStructures, customGroups]);
-
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<string>('');
   const [reportCover, setReportCover] = useState<ReportCover>({} as ReportCover);
@@ -100,6 +95,93 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     return saved ? JSON.parse(saved) : {};
   });
   const [showDenoiseConfig, setShowDenoiseConfig] = useState(false);
+  const [deviceMetaRules, setDeviceMetaRules] = useState<Record<string, { sensorType?: string | null; unit?: string | null; alarmThreshold?: number | null; maxDelta?: number | null; min?: number | null; max?: number | null }>>(() => {
+    const saved = localStorage.getItem('device_meta_rules_v1');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [showDeviceMetaConfig, setShowDeviceMetaConfig] = useState(false);
+  const [indicatorSelection, setIndicatorSelection] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem('indicator_selection_v1');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [showIndicatorSelect, setShowIndicatorSelect] = useState(false);
+
+  const allDeviceTypes = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const s of processedStructures) {
+      for (const sensor of (s.sensors || [])) {
+        const key = String(sensor.deviceType || sensor.sheetType || '').trim();
+        if (key) set.add(key);
+      }
+    }
+    return set;
+  }, [processedStructures]);
+
+  const DEVICE_PRESETS = React.useMemo(() => {
+    return {
+      '一体化倾角振动监测仪': { sensorType: 'inclination', unit: '°' },
+      '光电挠度仪': { sensorType: 'displacement', unit: 'mm' },
+      '拉线位移传感器': { sensorType: 'displacement', unit: 'mm' },
+      '盒式固定测斜仪': { sensorType: 'inclination', unit: '°' },
+      '一体化振动监测仪': { sensorType: 'acceleration', unit: 'mg' },
+      '裂缝计': { sensorType: 'crack', unit: 'mm' },
+      '激光测距仪': { sensorType: 'displacement', unit: 'mm' },
+    } as Record<string, { sensorType: string; unit: string }>;
+  }, []);
+
+  const allDeviceTypeList = React.useMemo(() => {
+    const set = new Set<string>(Array.from(allDeviceTypes));
+    Object.keys(DEVICE_PRESETS).forEach((k) => set.add(k));
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  }, [allDeviceTypes, DEVICE_PRESETS]);
+
+  const allSheetNameList = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const s of processedStructures) {
+      for (const sensor of (s.sensors || [])) {
+        const sheet = String(sensor.sheetType || '').trim();
+        if (sheet) set.add(sheet);
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  }, [processedStructures]);
+
+  const displayStructures = React.useMemo(() => {
+    return processedStructures.map((structure) => ({
+      ...structure,
+      sensors: (structure.sensors || []).map((sensor) => {
+        const key = String(sensor.deviceType || sensor.sheetType || '').trim();
+        const meta = key ? deviceMetaRules[key] : undefined;
+        const unit = meta?.unit && String(meta.unit).trim() ? String(meta.unit).trim() : sensor.unit;
+        const sensorType = meta?.sensorType && String(meta.sensorType).trim() ? String(meta.sensorType).trim() : sensor.sensorType;
+        const alarmThreshold = meta?.alarmThreshold;
+        return {
+          ...sensor,
+          unit,
+          sensorType,
+          alarmThreshold: typeof alarmThreshold === 'number' && Number.isFinite(alarmThreshold) ? alarmThreshold : sensor.alarmThreshold
+        };
+      })
+    }));
+  }, [processedStructures, deviceMetaRules]);
+
+  const selectedStructures = React.useMemo(() => {
+    return displayStructures
+      .map((structure) => ({
+        ...structure,
+        sensors: (structure.sensors || []).filter((sensor) => {
+          const sheet = String(sensor.sheetType || '').trim();
+          if (!sheet) return true;
+          return indicatorSelection[sheet] !== false;
+        }),
+      }))
+      .filter((s) => (s.sensors || []).length > 0);
+  }, [displayStructures, indicatorSelection]);
+
+  const displayStructureGroups = React.useMemo(() => {
+    if (!customGroups || !customGroups.trim()) return null;
+    return groupStructures(selectedStructures, customGroups);
+  }, [selectedStructures, customGroups]);
 
   const reportRef = useRef<HTMLDivElement>(null);
   const areaVisibilityRef = useRef<{ editor: number; preview: number }>({ editor: 0, preview: 0 });
@@ -131,6 +213,18 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     localStorage.setItem('analysis_config', JSON.stringify(analysisConfig));
   }, [analysisConfig]);
 
+  useEffect(() => {
+    localStorage.setItem('denoise_rules_v2', JSON.stringify(denoiseRules));
+  }, [denoiseRules]);
+
+  useEffect(() => {
+    localStorage.setItem('device_meta_rules_v1', JSON.stringify(deviceMetaRules));
+  }, [deviceMetaRules]);
+
+  useEffect(() => {
+    localStorage.setItem('indicator_selection_v1', JSON.stringify(indicatorSelection));
+  }, [indicatorSelection]);
+
   // Check for AI Config
   useEffect(() => {
     const config = localStorage.getItem('ai_config');
@@ -145,7 +239,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     }
 
     const newResults: Record<string, StructureAnalysisResult> = {};
-    processedStructures.forEach(structure => {
+    selectedStructures.forEach(structure => {
       const key = getStructureKey(structure);
       const sensors = structure.sensors.map(sensor => {
         const displaySensor = getDisplaySensor(key, sensor);
@@ -158,7 +252,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       }
     });
     setAnalysisResults(newResults);
-  }, [processedStructures, analysisConfig, denoiseStructures, denoiseSensors, denoiseRules]);
+  }, [selectedStructures, analysisConfig, denoiseStructures, denoiseSensors, denoiseRules, deviceMetaRules]);
 
   // Perform AI Analysis (Manual Trigger Only)
   /* 
@@ -276,8 +370,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     const aiConfig = JSON.parse(savedConfig);
 
     const targetStructures = structureKey 
-      ? processedStructures.filter(s => getStructureKey(s) === structureKey)
-      : processedStructures;
+      ? selectedStructures.filter(s => getStructureKey(s) === structureKey)
+      : selectedStructures;
 
     if (targetStructures.length === 0) return;
 
@@ -361,9 +455,9 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
   // Compute Available Types for Toolbar
   const availableTypes = React.useMemo(() => {
     const types = new Set<string>();
-    const targetStructure = processedStructures.find(s => getStructureKey(s) === expandedAnalysisStructureKey);
+    const targetStructure = selectedStructures.find(s => getStructureKey(s) === expandedAnalysisStructureKey);
     // If a structure is expanded, show its types. Otherwise show all types.
-    const source = targetStructure ? [targetStructure] : processedStructures;
+    const source = targetStructure ? [targetStructure] : selectedStructures;
     
     source.forEach(s => {
       s.sensors.forEach(sensor => {
@@ -372,18 +466,18 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       });
     });
     return types;
-  }, [processedStructures, expandedAnalysisStructureKey]);
+  }, [selectedStructures, expandedAnalysisStructureKey]);
 
   const allAvailableTypes = React.useMemo(() => {
     const types = new Set<string>();
-    processedStructures.forEach(s => {
+    selectedStructures.forEach(s => {
       s.sensors.forEach(sensor => {
         const type = getSensorType(sensor);
         if (type) types.add(type);
       });
     });
     return types;
-  }, [processedStructures]);
+  }, [selectedStructures]);
 
   const getTypeMeta = (type: string) => {
     const map: Record<string, { label: string; unit: string }> = {
@@ -398,10 +492,15 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
   const getDenoiseRule = (sensor: any) => {
     const type = getSensorType(sensor) || 'other';
-    const rule = denoiseRules[type] || {};
-    const maxDelta = typeof rule.maxDelta === 'number' && Number.isFinite(rule.maxDelta) && rule.maxDelta > 0 ? rule.maxDelta : undefined;
-    const min = typeof rule.min === 'number' && Number.isFinite(rule.min) ? rule.min : undefined;
-    const max = typeof rule.max === 'number' && Number.isFinite(rule.max) ? rule.max : undefined;
+    const deviceKey = String(sensor.deviceType || sensor.sheetType || '').trim();
+    const deviceRule = deviceKey ? deviceMetaRules[deviceKey] : undefined;
+    const maxDeltaSource = deviceRule?.maxDelta !== undefined ? deviceRule : (denoiseRules[type] || {});
+    const minSource = deviceRule?.min !== undefined ? deviceRule : (denoiseRules[type] || {});
+    const maxSource = deviceRule?.max !== undefined ? deviceRule : (denoiseRules[type] || {});
+
+    const maxDelta = typeof maxDeltaSource.maxDelta === 'number' && Number.isFinite(maxDeltaSource.maxDelta) && maxDeltaSource.maxDelta > 0 ? maxDeltaSource.maxDelta : undefined;
+    const min = typeof minSource.min === 'number' && Number.isFinite(minSource.min) ? minSource.min : undefined;
+    const max = typeof maxSource.max === 'number' && Number.isFinite(maxSource.max) ? maxSource.max : undefined;
     return { type, maxDelta, min, max };
   };
 
@@ -425,7 +524,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     if (key === 'enableDenoise' && value) {
       setDenoiseStructures(prev => {
         const next = { ...prev };
-        for (const s of processedStructures) {
+        for (const s of selectedStructures) {
           const k = getStructureKey(s);
           if (next[k] === undefined) next[k] = true;
         }
@@ -440,7 +539,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     setDenoiseStructures(prev => {
       const next = { ...prev };
       let changed = false;
-      for (const s of processedStructures) {
+      for (const s of selectedStructures) {
         const k = getStructureKey(s);
         if (next[k] === undefined) {
           next[k] = true;
@@ -449,7 +548,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       }
       return changed ? next : prev;
     });
-  }, [analysisConfig.enableDenoise, processedStructures]);
+  }, [analysisConfig.enableDenoise, selectedStructures]);
 
   useEffect(() => {
     localStorage.setItem('denoise_rules_v2', JSON.stringify(denoiseRules));
@@ -493,7 +592,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
   };
 
   // Calculate report statistics
-  const totalCharts = processedStructures.reduce((acc, structure) => acc + structure.sensors.length, 0);
+  const totalCharts = selectedStructures.reduce((acc, structure) => acc + structure.sensors.length, 0);
   const totalWords = template.sections.reduce((acc, section) => {
     return acc + (section.content?.length || 0);
   }, 0);
@@ -509,8 +608,30 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
   const formatRate = (online?: number, total?: number) => {
     if (!total) return '-';
-    const percent = Math.round(((online || 0) / total) * 100);
-    return `${percent}% (${online || 0}/${total})`;
+    const percent = (((online || 0) / total) * 100);
+    return `${percent.toFixed(3)}% (${online || 0}/${total})`;
+  };
+
+  const formatSensorTitleForPreview = (sensor: any) => {
+    const deviceName = String(sensor?.sheetType || sensor?.deviceType || '').trim();
+    const rawName = String(sensor?.name || '').trim();
+    if (!deviceName && !rawName) return '';
+
+    let location = rawName;
+    let inner = '';
+    const match = rawName.match(/^(.*)[(（](.*)[)）]$/);
+    if (match) {
+      location = match[1].trim();
+      inner = match[2].trim();
+    }
+
+    const directionMatch = inner.match(/[XYZ]/i);
+    const direction = directionMatch ? directionMatch[0].toUpperCase() : '';
+    const bracket = [location, direction].filter(Boolean).join(' ');
+
+    if (deviceName && bracket) return `${deviceName}（${bracket}）`;
+    if (deviceName) return deviceName;
+    return bracket || rawName;
   };
 
   const handleSectionClick = (sectionId: string) => {
@@ -565,6 +686,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
   const handleExportWord = async () => {
     if (isExporting) return;
+    if (selectedStructures.length === 0) {
+      alert('请先在“指标选择”中至少选择一个设备');
+      return;
+    }
     
     setIsExporting(true);
     setExportProgress('正在提交生成任务...');
@@ -583,8 +708,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
         // 1. Submit task to backend
         // Enrich structures with AI analysis results and algorithm results
-        // Use processedStructures to ensure correct order
-        const bridgesWithAi = processedStructures.map(s => {
+        const bridgesWithAi = selectedStructures.map(s => {
           const key = getStructureKey(s);
           const displayStructure = getDisplayStructure(s);
           return {
@@ -596,8 +720,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
         // Prepare groups if they exist
         let exportGroups = null;
-        if (structureGroups) {
-          exportGroups = structureGroups.map(g => ({
+        if (displayStructureGroups) {
+          exportGroups = displayStructureGroups.map(g => ({
             name: g.name,
             structures: g.structures.map(s => {
               const key = getStructureKey(s);
@@ -828,7 +952,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       <div className="flex justify-between items-center bg-white p-6 rounded-xl shadow-sm border border-gray-100 z-20">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">分析仪表盘</h2>
-          <p className="text-gray-500">已加载 {processedStructures.length} 个结构物数据</p>
+          <p className="text-gray-500">已加载 {displayStructures.length} 个结构物数据</p>
         </div>
         <div className="flex gap-3">
           <button
@@ -887,8 +1011,88 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
           isAiAnalyzing={Object.values(isAiLoading).some(v => v)}
           onAiStop={() => handleStopAiAnalysis()}
           onOpenDenoiseConfig={() => setShowDenoiseConfig(true)}
+          onOpenDeviceMetaConfig={() => setShowDeviceMetaConfig(true)}
+          onOpenIndicatorSelect={() => setShowIndicatorSelect(true)}
         />
       </div>
+
+      {showIndicatorSelect && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/40"
+          onMouseDown={() => setShowIndicatorSelect(false)}
+        >
+          <div
+            className="w-full max-w-xl bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+              <div className="space-y-0.5">
+                <div className="text-base font-semibold text-gray-900">指标选择</div>
+                <div className="text-xs text-gray-500">取消勾选后，该设备数据不会参与分析与导出</div>
+              </div>
+              <button
+                onClick={() => setShowIndicatorSelect(false)}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="px-6 py-4">
+              <div className="flex items-center gap-2 mb-3">
+                <button
+                  onClick={() => {
+                    const next: Record<string, boolean> = {};
+                    allSheetNameList.forEach((k) => (next[k] = true));
+                    setIndicatorSelection(next);
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 rounded-lg border border-gray-200 transition-colors"
+                >
+                  全选
+                </button>
+                <button
+                  onClick={() => {
+                    const next: Record<string, boolean> = {};
+                    allSheetNameList.forEach((k) => (next[k] = false));
+                    setIndicatorSelection(next);
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 rounded-lg border border-gray-200 transition-colors"
+                >
+                  全不选
+                </button>
+                <button
+                  onClick={() => setIndicatorSelection({})}
+                  className="ml-auto px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-colors"
+                >
+                  恢复默认
+                </button>
+              </div>
+
+              <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-gray-200">
+                <div className="divide-y divide-gray-100">
+                  {allSheetNameList.map((sheet) => {
+                    const checked = indicatorSelection[sheet] !== false;
+                    return (
+                      <label key={sheet} className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                          checked={checked}
+                          onChange={(e) => setIndicatorSelection((prev) => ({ ...prev, [sheet]: e.target.checked }))}
+                        />
+                        <span className="text-sm text-gray-900">{sheet}</span>
+                      </label>
+                    );
+                  })}
+                  {allSheetNameList.length === 0 && (
+                    <div className="px-4 py-6 text-sm text-gray-500 text-center">暂无可选择的设备</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showDenoiseConfig && (
         <div
@@ -945,10 +1149,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                   [type]: { ...(prev[type] || {}), maxDelta: raw === '' ? null : Number(raw) }
                                 }));
                               }}
-                              className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-green-400 focus:ring-green-200"
+                              className="flex-1 min-w-0 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-green-400 focus:ring-green-200"
                               placeholder={meta.unit ? `例如：5 ${meta.unit}` : '例如：5'}
                             />
-                            <div className="text-xs text-gray-500 w-10 text-right">{meta.unit || ''}</div>
+                            <div className="text-xs text-gray-500 shrink-0 whitespace-nowrap min-w-[3.5rem] text-right">{meta.unit || ''}</div>
                           </div>
                         </div>
 
@@ -967,10 +1171,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                     [type]: { ...(prev[type] || {}), min: raw === '' ? null : Number(raw) }
                                   }));
                                 }}
-                                className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-green-400 focus:ring-green-200"
+                                className="flex-1 min-w-0 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-green-400 focus:ring-green-200"
                                 placeholder="-"
                               />
-                              <div className="text-xs text-gray-500 w-10 text-right">{meta.unit || ''}</div>
+                              <div className="text-xs text-gray-500 shrink-0 whitespace-nowrap min-w-[3.5rem] text-right">{meta.unit || ''}</div>
                             </div>
                           </div>
                           <div>
@@ -987,10 +1191,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                     [type]: { ...(prev[type] || {}), max: raw === '' ? null : Number(raw) }
                                   }));
                                 }}
-                                className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-green-400 focus:ring-green-200"
+                                className="flex-1 min-w-0 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-green-400 focus:ring-green-200"
                                 placeholder="-"
                               />
-                              <div className="text-xs text-gray-500 w-10 text-right">{meta.unit || ''}</div>
+                              <div className="text-xs text-gray-500 shrink-0 whitespace-nowrap min-w-[3.5rem] text-right">{meta.unit || ''}</div>
                             </div>
                           </div>
                         </div>
@@ -1019,6 +1223,215 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
               <button
                 onClick={() => setShowDenoiseConfig(false)}
                 className="px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeviceMetaConfig && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/40"
+          onMouseDown={() => setShowDeviceMetaConfig(false)}
+        >
+          <div
+            className="w-full max-w-5xl bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+              <div className="space-y-0.5">
+                <div className="text-base font-semibold text-gray-900">设备/单位设置</div>
+                <div className="text-xs text-gray-500">按设备类型设置：传感器类型、单位、报警阈值、去噪规则</div>
+              </div>
+              <button
+                onClick={() => setShowDeviceMetaConfig(false)}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="px-6 py-5 max-h-[70vh] overflow-auto">
+              <div className="grid grid-cols-1 gap-4">
+                {allDeviceTypeList.map((deviceType) => {
+                  const rule = deviceMetaRules[deviceType] || {};
+                  const unitValue = rule.unit ?? '';
+                  const sensorTypeValue = rule.sensorType ?? '';
+                  const alarmThresholdValue = rule.alarmThreshold ?? '';
+                  const maxDeltaValue = rule.maxDelta ?? '';
+                  const minValue = rule.min ?? '';
+                  const maxValue = rule.max ?? '';
+
+                  return (
+                    <div key={deviceType} className="rounded-xl border border-gray-200 p-4">
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-gray-900 break-words">{deviceType}</div>
+                          <div className="text-xs text-gray-500">来源：设备类型 / Excel sheet</div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                        <div className="lg:col-span-3">
+                          <div className="text-xs text-gray-600 mb-1">传感器类型</div>
+                          <select
+                            value={sensorTypeValue}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setDeviceMetaRules(prev => ({
+                                ...prev,
+                                [deviceType]: { ...(prev[deviceType] || {}), sensorType: raw ? raw : null }
+                              }));
+                            }}
+                            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:border-blue-400 focus:ring-blue-200"
+                          >
+                            <option value="">不指定</option>
+                            <option value="inclination">倾角</option>
+                            <option value="displacement">位移/挠度</option>
+                            <option value="acceleration">振动/加速度</option>
+                            <option value="temperature">温度</option>
+                            <option value="crack">裂缝</option>
+                            <option value="other">其他</option>
+                          </select>
+                        </div>
+
+                        <div className="lg:col-span-2">
+                          <div className="text-xs text-gray-600 mb-1">单位</div>
+                          <input
+                            value={unitValue}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setDeviceMetaRules(prev => ({
+                                ...prev,
+                                [deviceType]: { ...(prev[deviceType] || {}), unit: raw.trim() ? raw : null }
+                              }));
+                            }}
+                            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                            placeholder="例如：mm"
+                          />
+                        </div>
+
+                        <div className="lg:col-span-2">
+                          <div className="text-xs text-gray-600 mb-1">报警阈值</div>
+                          <input
+                            type="number"
+                            step={0.1}
+                            value={alarmThresholdValue}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setDeviceMetaRules(prev => ({
+                                ...prev,
+                                [deviceType]: { ...(prev[deviceType] || {}), alarmThreshold: raw === '' ? null : Number(raw) }
+                              }));
+                            }}
+                            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                            placeholder="-"
+                          />
+                        </div>
+
+                        <div className="lg:col-span-5">
+                          <div className="text-xs text-gray-600 mb-1">去噪规则</div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.1}
+                                value={maxDeltaValue}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  setDeviceMetaRules(prev => ({
+                                    ...prev,
+                                    [deviceType]: { ...(prev[deviceType] || {}), maxDelta: raw === '' ? null : Number(raw) }
+                                  }));
+                                }}
+                                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                                placeholder="最大变化量"
+                              />
+                            </div>
+                            <div>
+                              <input
+                                type="number"
+                                step={0.1}
+                                value={minValue}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  setDeviceMetaRules(prev => ({
+                                    ...prev,
+                                    [deviceType]: { ...(prev[deviceType] || {}), min: raw === '' ? null : Number(raw) }
+                                  }));
+                                }}
+                                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                                placeholder="下限"
+                              />
+                            </div>
+                            <div>
+                              <input
+                                type="number"
+                                step={0.1}
+                                value={maxValue}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  setDeviceMetaRules(prev => ({
+                                    ...prev,
+                                    [deviceType]: { ...(prev[deviceType] || {}), max: raw === '' ? null : Number(raw) }
+                                  }));
+                                }}
+                                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                                placeholder="上限"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {allDeviceTypeList.length === 0 && (
+                  <div className="text-sm text-gray-600">未识别到设备类型</div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-100 bg-white flex items-center justify-end gap-3">
+              <button
+                onClick={() => {
+                  setDeviceMetaRules(prev => {
+                    const next = { ...prev };
+                    for (const k of Object.keys(DEVICE_PRESETS)) {
+                      const preset = DEVICE_PRESETS[k];
+                      const cur = next[k] || {};
+                      const curType = typeof cur.sensorType === 'string' ? cur.sensorType.trim() : '';
+                      const curUnit = typeof cur.unit === 'string' ? cur.unit.trim() : '';
+                      next[k] = {
+                        ...cur,
+                        sensorType: curType ? curType : preset.sensorType,
+                        unit: curUnit ? curUnit : preset.unit
+                      };
+                    }
+                    return next;
+                  });
+                }}
+                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                预设已知设备
+              </button>
+              <button
+                onClick={() => {
+                  const defaults: Record<string, { sensorType?: string | null; unit?: string | null; alarmThreshold?: number | null; maxDelta?: number | null; min?: number | null; max?: number | null }> = {};
+                  allDeviceTypeList.forEach((t) => (defaults[t] = {}));
+                  setDeviceMetaRules(prev => ({ ...defaults, ...prev }));
+                }}
+                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                填充空配置
+              </button>
+              <button
+                onClick={() => setShowDeviceMetaConfig(false)}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
               >
                 保存
               </button>
@@ -1085,8 +1498,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                     </h4>
                   </div>
                   <div className="max-h-60 overflow-y-auto p-2 space-y-1">
-                    {structureGroups ? (
-                      structureGroups.map((group) => (
+                    {displayStructureGroups ? (
+                      displayStructureGroups.map((group) => (
                         <div key={group.name} className="space-y-1 mb-2">
                           <div className="px-2 py-1 text-xs font-bold text-gray-500 bg-gray-50 rounded">
                             {group.name}
@@ -1114,14 +1527,14 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                               }}
                               className="w-full text-left px-3 py-1.5 rounded text-xs text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors truncate flex items-center gap-2 pl-4"
                             >
-                              <span className="w-4 text-center text-gray-400 font-mono">{idx + 1}</span>
+                              <span className="w-10 text-center text-gray-400 font-mono">（{idx + 1}）</span>
                               {s.name}
                             </button>
                           ))}
                         </div>
                       ))
                     ) : (
-                      processedStructures.map((s, idx) => (
+                      selectedStructures.map((s, idx) => (
                         <button
                           key={getStructureKey(s)}
                           onClick={() => {
@@ -1144,7 +1557,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                           }}
                           className="w-full text-left px-3 py-1.5 rounded text-xs text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors truncate flex items-center gap-2"
                         >
-                          <span className="w-4 text-center text-gray-400 font-mono">{idx + 1}</span>
+                          <span className="w-10 text-center text-gray-400 font-mono">（{idx + 1}）</span>
                           {s.name}
                         </button>
                       ))
@@ -1227,8 +1640,8 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {processedStructures.length > 0 ? (
-                              processedStructures.map((structure) => {
+                            {displayStructures.length > 0 ? (
+                              displayStructures.map((structure) => {
                                 const device = deviceStatuses.find(d => d.id === structure.id && (d.type || '1') === (structure.type || '1')) || null;
                                 const stats = device?.stats || {};
                                 const types = stats.types || {};
@@ -1270,9 +1683,9 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
                   {section.type === 'chart_analysis' && (
                     <div className="space-y-12">
-                      {structureGroups ? (
+                      {displayStructureGroups ? (
                         <div className="space-y-16">
-                          {structureGroups.map((group) => (
+                          {displayStructureGroups.map((group) => (
                             <div key={group.name} className="space-y-8">
                               <div className="flex items-center gap-3 pb-2 border-b border-gray-200">
                                 <h3 className="text-xl font-bold text-gray-800">{group.name}</h3>
@@ -1281,9 +1694,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                 </span>
                               </div>
                               <div className="space-y-12">
-                                {group.structures.map((structure) => {
+                                {group.structures.map((structure, structureIdx) => {
                                   const structureKey = getStructureKey(structure);
                                   const isExpanded = expandedAnalysisStructureKey === structureKey;
+                                  const displayStructureName = `（${structureIdx + 1}）${structure.name}`;
                                   return (
                                     <details 
                                       key={structureKey} 
@@ -1312,7 +1726,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                             <Activity className="w-5 h-5" />
                                           </div>
                                           <h4 className="text-lg font-bold text-gray-900">
-                                            {structure.name}
+                                            {displayStructureName}
                                           </h4>
                                           <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                                             {structure.sensors.length} 个测点
@@ -1373,13 +1787,14 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                         {/* Chart Grid */}
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                           {isExpanded && (
-                                            structure.sensors.map((sensor) => {
+                                            structure.sensors.map((sensor, sensorIdx) => {
                                           const sensorKey = `${structureKey}-${sensor.id}`;
                                           const displaySensor = getDisplaySensor(structureKey, sensor);
+                                          const displaySensorName = `${sensorIdx + 1}）${formatSensorTitleForPreview(sensor)}`;
                                               return (
                                                 <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
                                                <div className="flex items-center justify-between mb-2">
-                                                 <div className="text-sm font-medium text-gray-700">{sensor.name}</div>
+                                                 <div className="text-sm font-medium text-gray-700">{displaySensorName}</div>
                                                  <label className="flex items-center gap-2 cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
                                                    <input 
                                                      type="checkbox" 
@@ -1426,9 +1841,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                           ))}
                         </div>
                       ) : (
-                        processedStructures.map((structure) => {
+                        selectedStructures.map((structure, structureIdx) => {
                           const structureKey = getStructureKey(structure);
                           const isExpanded = expandedAnalysisStructureKey === structureKey;
+                          const displayStructureName = `（${structureIdx + 1}）${structure.name}`;
                           return (
                             <details 
                               key={structureKey} 
@@ -1457,7 +1873,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                     <Activity className="w-5 h-5" />
                                   </div>
                                   <h4 className="text-lg font-bold text-gray-900">
-                                    {structure.name}
+                                    {displayStructureName}
                                   </h4>
                                   <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                                     {structure.sensors.length} 个测点
@@ -1518,13 +1934,14 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                 {/* Chart Grid */}
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                   {isExpanded && (
-                                    structure.sensors.map((sensor) => {
+                                    structure.sensors.map((sensor, sensorIdx) => {
                                       const sensorKey = `${structureKey}-${sensor.id}`;
                                       const displaySensor = getDisplaySensor(structureKey, sensor);
+                                      const displaySensorName = `${sensorIdx + 1}）${formatSensorTitleForPreview(sensor)}`;
                                       return (
                                         <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
                                            <div className="flex items-center justify-between mb-2">
-                                             <div className="text-sm font-medium text-gray-700">{sensor.name}</div>
+                                             <div className="text-sm font-medium text-gray-700">{displaySensorName}</div>
                                              <label className="flex items-center gap-2 cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
                                                <input 
                                                  type="checkbox" 
