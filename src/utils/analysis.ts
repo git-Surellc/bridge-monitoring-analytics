@@ -468,6 +468,9 @@ export const analyzeStructure = (structure: StructureData, config: AnalysisConfi
 // ==========================================
 
 export const getSensorType = (sensor: SensorData): string | null => {
+  if (sensor.sensorType && typeof sensor.sensorType === 'string') {
+    return sensor.sensorType;
+  }
   const name = (sensor.name || '').toLowerCase();
   const sheetType = (sensor.sheetType || '').toLowerCase();
   const text = `${name} ${sheetType}`;
@@ -499,7 +502,7 @@ export const generateAiPrompt = (structure: StructureData, analysis: StructureAn
   
   // Add key stats
   Object.entries(analysis.quality).forEach(([id, q]) => {
-    summary.push(`Sensor ${id}: Outlier Rate ${(q.outlierRate * 100).toFixed(1)}%, CV ${q.cv.toFixed(2)}`);
+    summary.push(`Sensor ${id}: Outlier Rate ${(q.outlierRate * 100).toFixed(3)}%, CV ${q.cv.toFixed(3)}`);
   });
   
   // Add trends

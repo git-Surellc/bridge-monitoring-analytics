@@ -23,9 +23,11 @@ interface AnalysisToolbarProps {
   isAiAnalyzing?: boolean;
   onAiStop?: () => void;
   onOpenDenoiseConfig?: () => void;
+  onOpenDeviceMetaConfig?: () => void;
+  onOpenIndicatorSelect?: () => void;
 }
 
-export function AnalysisToolbar({ config, onChange, availableTypes, hasAiConfig, onAiAnalyze, isAiAnalyzing, onAiStop, onOpenDenoiseConfig }: AnalysisToolbarProps) {
+export function AnalysisToolbar({ config, onChange, availableTypes, hasAiConfig, onAiAnalyze, isAiAnalyzing, onAiStop, onOpenDenoiseConfig, onOpenDeviceMetaConfig, onOpenIndicatorSelect }: AnalysisToolbarProps) {
   if (!config.enableGlobal) {
     return (
       <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 sticky top-16 z-10 shadow-sm">
@@ -61,6 +63,22 @@ export function AnalysisToolbar({ config, onChange, availableTypes, hasAiConfig,
       </div>
 
       <div className="flex items-center gap-4">
+        {onOpenIndicatorSelect && (
+          <button
+            onClick={onOpenIndicatorSelect}
+            className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 rounded-full border border-gray-200 transition-colors"
+          >
+            指标选择
+          </button>
+        )}
+        {onOpenDeviceMetaConfig && (
+          <button
+            onClick={onOpenDeviceMetaConfig}
+            className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-full border border-blue-200 transition-colors"
+          >
+            设备/单位设置
+          </button>
+        )}
         <label className="flex items-center gap-2 cursor-pointer select-none group">
           <input 
             type="checkbox" 

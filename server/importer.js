@@ -15,6 +15,18 @@ if (!fs.existsSync(EXCEL_DIR)) {
 // In-memory task tracking
 const activeTasks = new Map(); // month -> { status, progress, total, success, fail, logs: [] }
 
+const makeGroupKey = (id, type) => `${id}-${type || '1'}`;
+
+const truncateText = (text, maxLen = 800) => {
+  if (typeof text !== 'string') return '';
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen) + '...';
+};
+
+const pushLog = (task, entry) => {
+  task.logs.push({ ts: Date.now(), ...entry });
+};
+
 export const startImportTask = (month, structures, token) => {
   if (activeTasks.has(month)) {
     const task = activeTasks.get(month);
@@ -43,6 +55,7 @@ async function processImport(month, structures, task, token) {
   try {
     for (const item of structures) {
       if (task.status === 'stopped') break;
+      const groupKey = makeGroupKey(item.id, item.type);
 
       // Check DB using month + structure_id + structure_type
       const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ? AND structure_type = ?').get(month, item.id, item.type);
@@ -56,14 +69,16 @@ async function processImport(month, structures, task, token) {
 
         task.success++;
         task.progress++;
-        task.logs.push({ 
+        pushLog(task, { 
           id: item.id, 
           type: item.type,
           name: item.name,
           status: 'skipped', 
-          msg: `已存在 (无需请求): ${item.name}`,
+          msg: `完成（缓存命中）: ${item.name}`,
           fromCache: true,
-          downloadUrl
+          downloadUrl,
+          groupKey,
+          isFinal: true
         });
         continue;
       }
@@ -72,6 +87,9 @@ async function processImport(month, structures, task, token) {
       try {
         const url = `http://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/exportMonthData?month=${month}&structureType=${item.type}&structureId=${item.id}`;
         
+        pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'info', msg: `开始获取 ${month} 数据`, groupKey });
+        pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'info', msg: '请求平台 API', groupKey, detail: url });
+
         const headers = {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
           'Authorization': token || ''
@@ -96,16 +114,20 @@ async function processImport(month, structures, task, token) {
         }
         
         // Save file
-        const buffer = await response.arrayBuffer();
+        const contentType = response.headers.get('content-type') || '';
+        const contentDisposition = response.headers.get('content-disposition') || '';
+        const ab = await response.arrayBuffer();
         
         // Check for small error response (sometimes API returns JSON error with 200 OK)
-        if (buffer.byteLength < 500) { 
-           const text = new TextDecoder().decode(buffer);
+        let apiReplyDetail = '';
+        if (ab.byteLength < 500) { 
+           const text = new TextDecoder().decode(ab);
            try {
              const json = JSON.parse(text);
              if (json.code && json.code !== 200) {
                 throw new Error(json.msg || 'API returned error JSON');
              }
+             apiReplyDetail = truncateText(JSON.stringify(json));
            } catch (e) {
              // Not JSON, assume valid file content
            }
@@ -113,9 +135,20 @@ async function processImport(month, structures, task, token) {
 
         const fileName = `${item.name}_${month}_${item.id}.xlsx`;
         const filePath = path.join(EXCEL_DIR, fileName);
-        fs.writeFileSync(filePath, Buffer.from(buffer));
+        fs.writeFileSync(filePath, Buffer.from(ab));
         
         const downloadUrl = `/storage/excel/${fileName}`;
+
+        pushLog(task, { 
+          id: item.id,
+          type: item.type,
+          name: item.name,
+          status: 'info',
+          msg: `平台 API 已返回（HTTP ${response.status}，${ab.byteLength} bytes）`,
+          groupKey,
+          detail: truncateText([contentType ? `Content-Type: ${contentType}` : '', contentDisposition ? `Content-Disposition: ${contentDisposition}` : '', apiReplyDetail ? `Reply: ${apiReplyDetail}` : ''].filter(Boolean).join('\n'))
+        });
+        pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'info', msg: `已保存 Excel：${fileName}`, groupKey });
 
         // Update DB
         if (existing) {
@@ -127,11 +160,11 @@ async function processImport(month, structures, task, token) {
         }
 
         task.success++;
-        task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'success', msg: `下载成功: ${item.name}`, downloadUrl });
+        pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'success', msg: `完成: ${item.name}`, downloadUrl, groupKey, isFinal: true });
 
       } catch (err) {
         task.fail++;
-        task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}` });
+        pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}`, groupKey, isFinal: true });
         
         // Record error in DB
         if (existing) {
@@ -160,11 +193,13 @@ export const stopImportTask = (month) => {
     const task = activeTasks.get(month);
     if (task.status === 'running') {
       task.status = 'stopped';
-      task.logs.push({ 
+      pushLog(task, { 
         id: 'system', 
         type: 'system', 
         status: 'warning', 
-        msg: '用户手动停止了任务' 
+        msg: '用户手动停止了任务',
+        groupKey: 'system',
+        isFinal: true
       });
       return true;
     }
@@ -203,7 +238,10 @@ export const getImportStatus = (month) => {
         status: row.status === 'success' ? 'success' : 'error',
         msg: row.status === 'success' ? '已完成' : (row.error_msg || '未知错误'),
         downloadUrl: row.file_path ? `/storage/excel/${path.basename(row.file_path)}` : null,
-        fromCache: true
+        fromCache: true,
+        groupKey: makeGroupKey(row.structure_id, row.structure_type),
+        isFinal: true,
+        ts: Date.now()
       }));
 
       return { status: 'completed', progress: total, total, success, fail, logs };
@@ -243,7 +281,7 @@ export const retryImport = async (month, structureId) => {
 };
 
 // Period-based import: quarter/year
-const fetchMonthExcelBuffer = async (month, type, id, token) => {
+const fetchMonthExcel = async (month, type, id, token) => {
   const url = `http://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/exportMonthData?month=${month}&structureType=${type}&structureId=${id}`;
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -265,6 +303,8 @@ const fetchMonthExcelBuffer = async (month, type, id, token) => {
     }
     throw new Error(`请求失败 (${response.status}): ${errorDetail || response.statusText}`);
   }
+  const contentType = response.headers.get('content-type') || '';
+  const contentDisposition = response.headers.get('content-disposition') || '';
   const buffer = await response.arrayBuffer();
   // Check for small error response
   if (buffer.byteLength < 500) {
@@ -278,7 +318,16 @@ const fetchMonthExcelBuffer = async (month, type, id, token) => {
       // not JSON, assume valid
     }
   }
-  return Buffer.from(buffer);
+  return {
+    buffer: Buffer.from(buffer),
+    meta: {
+      url,
+      httpStatus: response.status,
+      contentType,
+      contentDisposition,
+      byteLength: buffer.byteLength
+    }
+  };
 };
 
 const mergeMonthlyBuffersToWorkbook = (buffers) => {
@@ -351,6 +400,7 @@ export const startQuarterImport = (year, quarter, structures, token) => {
       const months = monthsOfQuarter(year, quarter);
       for (const item of structures) {
         if (task.status === 'stopped') break;
+        const groupKey = makeGroupKey(item.id, item.type);
         const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ? AND structure_type = ?').get(key, item.id, item.type);
         if (existing && existing.status === 'success' && existing.file_path && fs.existsSync(existing.file_path)) {
           db.prepare('UPDATE imports SET structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
@@ -358,10 +408,11 @@ export const startQuarterImport = (year, quarter, structures, token) => {
           const downloadUrl = `/storage/excel/${path.basename(existing.file_path)}`;
           task.success++;
           task.progress++;
-          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'skipped', msg: `已存在: ${item.name}`, fromCache: true, downloadUrl });
+          pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'skipped', msg: `完成（缓存命中）: ${item.name}`, fromCache: true, downloadUrl, groupKey, isFinal: true });
           continue;
         }
         try {
+          pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'info', msg: `开始处理结构（${key}）`, groupKey });
           const bufs = [];
           let cacheHits = 0;
           for (const m of months) {
@@ -369,10 +420,21 @@ export const startQuarterImport = (year, quarter, structures, token) => {
             if (cached) {
               bufs.push(cached);
               cacheHits++;
+              pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'info', msg: `缓存命中: ${m}`, groupKey });
               continue;
             }
-            const b = await fetchMonthExcelBuffer(m, item.type, item.id, token);
-            bufs.push(b);
+            pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'info', msg: `开始获取: ${m}`, groupKey });
+            const fetched = await fetchMonthExcel(m, item.type, item.id, token);
+            bufs.push(fetched.buffer);
+            pushLog(task, { 
+              id: item.id,
+              type: item.type,
+              name: item.name,
+              status: 'info',
+              msg: `平台 API 已返回（${m}，HTTP ${fetched.meta.httpStatus}，${fetched.meta.byteLength} bytes）`,
+              groupKey,
+              detail: truncateText([fetched.meta.contentType ? `Content-Type: ${fetched.meta.contentType}` : '', fetched.meta.contentDisposition ? `Content-Disposition: ${fetched.meta.contentDisposition}` : '', fetched.meta.url ? `URL: ${fetched.meta.url}` : ''].filter(Boolean).join('\n'))
+            });
           }
           const wb = mergeMonthlyBuffersToWorkbook(bufs);
           const xbuf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
@@ -388,10 +450,10 @@ export const startQuarterImport = (year, quarter, structures, token) => {
               .run(key, item.id, item.name, item.type, 'success', filePath);
           }
           task.success++;
-          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'success', msg: `下载合并成功: ${item.name} (缓存命中 ${cacheHits}/${months.length})`, downloadUrl });
+          pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'success', msg: `完成: ${item.name}（合并 ${months.length} 个月，缓存命中 ${cacheHits}/${months.length}）`, downloadUrl, groupKey, isFinal: true });
         } catch (err) {
           task.fail++;
-          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}` });
+          pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}`, groupKey, isFinal: true });
           if (existing) {
             db.prepare('UPDATE imports SET status = ?, error_msg = ?, structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
               .run('error', err.message, item.name, item.type, existing.id);
@@ -430,6 +492,7 @@ export const startYearImport = (year, structures, token) => {
       const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`);
       for (const item of structures) {
         if (task.status === 'stopped') break;
+        const groupKey = makeGroupKey(item.id, item.type);
         const existing = db.prepare('SELECT * FROM imports WHERE month = ? AND structure_id = ? AND structure_type = ?').get(key, item.id, item.type);
         if (existing && existing.status === 'success' && existing.file_path && fs.existsSync(existing.file_path)) {
           db.prepare('UPDATE imports SET structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
@@ -437,10 +500,11 @@ export const startYearImport = (year, structures, token) => {
           const downloadUrl = `/storage/excel/${path.basename(existing.file_path)}`;
           task.success++;
           task.progress++;
-          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'skipped', msg: `已存在: ${item.name}`, fromCache: true, downloadUrl });
+          pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'skipped', msg: `完成（缓存命中）: ${item.name}`, fromCache: true, downloadUrl, groupKey, isFinal: true });
           continue;
         }
         try {
+          pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'info', msg: `开始处理结构（${key}）`, groupKey });
           const bufs = [];
           let cacheHits = 0;
           for (const m of months) {
@@ -448,10 +512,21 @@ export const startYearImport = (year, structures, token) => {
             if (cached) {
               bufs.push(cached);
               cacheHits++;
+              pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'info', msg: `缓存命中: ${m}`, groupKey });
               continue;
             }
-            const b = await fetchMonthExcelBuffer(m, item.type, item.id, token);
-            bufs.push(b);
+            pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'info', msg: `开始获取: ${m}`, groupKey });
+            const fetched = await fetchMonthExcel(m, item.type, item.id, token);
+            bufs.push(fetched.buffer);
+            pushLog(task, { 
+              id: item.id,
+              type: item.type,
+              name: item.name,
+              status: 'info',
+              msg: `平台 API 已返回（${m}，HTTP ${fetched.meta.httpStatus}，${fetched.meta.byteLength} bytes）`,
+              groupKey,
+              detail: truncateText([fetched.meta.contentType ? `Content-Type: ${fetched.meta.contentType}` : '', fetched.meta.contentDisposition ? `Content-Disposition: ${fetched.meta.contentDisposition}` : '', fetched.meta.url ? `URL: ${fetched.meta.url}` : ''].filter(Boolean).join('\n'))
+            });
           }
           const wb = mergeMonthlyBuffersToWorkbook(bufs);
           const xbuf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
@@ -467,10 +542,10 @@ export const startYearImport = (year, structures, token) => {
               .run(key, item.id, item.name, item.type, 'success', filePath);
           }
           task.success++;
-          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'success', msg: `下载合并成功: ${item.name} (缓存命中 ${cacheHits}/${months.length})`, downloadUrl });
+          pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'success', msg: `完成: ${item.name}（合并 ${months.length} 个月，缓存命中 ${cacheHits}/${months.length}）`, downloadUrl, groupKey, isFinal: true });
         } catch (err) {
           task.fail++;
-          task.logs.push({ id: item.id, type: item.type, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}` });
+          pushLog(task, { id: item.id, type: item.type, name: item.name, status: 'error', msg: `失败: ${item.name} - ${err.message}`, groupKey, isFinal: true });
           if (existing) {
             db.prepare('UPDATE imports SET status = ?, error_msg = ?, structure_name = ?, structure_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
               .run('error', err.message, item.name, item.type, existing.id);
