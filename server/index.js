@@ -116,11 +116,7 @@ app.post('/api/import/stop', (req, res) => {
 app.get('/api/import/active', (req, res) => {
   try {
     const task = getActiveTask();
-    if (task) {
-      res.json(task);
-    } else {
-      res.status(404).json({ message: 'No active task' });
-    }
+    res.json(task || { month: null, status: 'idle' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -757,7 +757,11 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
         const { taskId } = await response.json();
         
         // 2. Poll for status
+        let done = false;
+        let inFlight = false;
         const pollInterval = setInterval(async () => {
+          if (done || inFlight) return;
+          inFlight = true;
           try {
             const statusRes = await fetch(`/api/reports/task/${taskId}`);
             if (!statusRes.ok) return;
@@ -765,10 +769,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
             const task = await statusRes.json();
             
             if (task.status === 'completed') {
+              done = true;
               clearInterval(pollInterval);
               setExportProgress('下载中...');
               
-              // Trigger download
               const link = document.createElement('a');
               link.href = task.downloadUrl;
               link.download = task.fileName;
@@ -779,19 +783,23 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
               setIsExporting(false);
               setExportProgress('');
             } else if (task.status === 'failed') {
+              done = true;
               clearInterval(pollInterval);
               throw new Error(task.error || 'Generation failed');
             } else {
               setExportProgress(`正在后端生成报告... ${task.progress}%`);
             }
           } catch (err) {
+            done = true;
             console.error('Polling error:', err);
             clearInterval(pollInterval);
             setIsExporting(false);
             setExportProgress('查询进度失败');
             alert('查询进度失败');
+          } finally {
+            inFlight = false;
           }
-        }, 1000); // Poll every 1 second for faster feedback
+        }, 1000);
 
       } catch (error) {
         console.error("Export failed", error);

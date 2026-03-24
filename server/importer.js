@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import * as XLSX from 'xlsx';
+import http from 'http';
+import https from 'https';
 import db from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +27,71 @@ const truncateText = (text, maxLen = 800) => {
 
 const pushLog = (task, entry) => {
   task.logs.push({ ts: Date.now(), ...entry });
+};
+
+const httpGetBuffer = (url, headers, maxRedirects = 3) =>
+  new Promise((resolve, reject) => {
+    try {
+      const u = new URL(url);
+      const lib = u.protocol === 'https:' ? https : http;
+
+      const req = lib.request(
+        {
+          method: 'GET',
+          hostname: u.hostname,
+          port: u.port || (u.protocol === 'https:' ? 443 : 80),
+          path: `${u.pathname}${u.search}`,
+          headers
+        },
+        (res) => {
+          const statusCode = Number(res.statusCode || 0);
+          const location = typeof res.headers.location === 'string' ? res.headers.location : '';
+
+          if (
+            maxRedirects > 0 &&
+            [301, 302, 303, 307, 308].includes(statusCode) &&
+            location
+          ) {
+            const nextUrl = new URL(location, u).toString();
+            res.resume();
+            httpGetBuffer(nextUrl, headers, maxRedirects - 1).then(resolve).catch(reject);
+            return;
+          }
+
+          const chunks = [];
+          res.on('data', (chunk) => chunks.push(chunk));
+          res.on('end', () => {
+            resolve({
+              statusCode,
+              headers: res.headers,
+              buffer: Buffer.concat(chunks)
+            });
+          });
+        }
+      );
+
+      req.on('error', reject);
+      req.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+
+const downloadExcelBuffer = async (url, headers) => {
+  if (typeof globalThis.fetch === 'function') {
+    const response = await fetch(url, { headers });
+    const contentType = String(response.headers.get('content-type') || '');
+    const contentDisposition = String(response.headers.get('content-disposition') || '');
+    const statusCode = Number(response.status);
+    const ab = await response.arrayBuffer();
+    const buffer = Buffer.from(ab);
+    return { statusCode, contentType, contentDisposition, buffer };
+  }
+
+  const res = await httpGetBuffer(url, headers);
+  const contentType = String(res.headers?.['content-type'] || '');
+  const contentDisposition = String(res.headers?.['content-disposition'] || '');
+  return { statusCode: res.statusCode, contentType, contentDisposition, buffer: res.buffer };
 };
 
 export const startImportTask = (month, structures, token) => {
@@ -95,33 +162,28 @@ async function processImport(month, structures, task, token) {
           'Authorization': token || ''
         };
 
-        const response = await fetch(url, { headers });
-        
-        if (!response.ok) {
-           let errorDetail = '';
-           try {
-             const errorText = await response.text();
-             try {
-               const errorJson = JSON.parse(errorText);
-               errorDetail = errorJson.msg || errorJson.message || JSON.stringify(errorJson);
-             } catch {
-               errorDetail = errorText.slice(0, 200);
-             }
-           } catch (e) {
-             errorDetail = '无法读取响应内容';
-           }
-           throw new Error(`请求失败 (${response.status}): ${errorDetail || response.statusText}`);
+        const { statusCode, contentType, contentDisposition, buffer: buf } = await downloadExcelBuffer(url, headers);
+
+        if (!(statusCode >= 200 && statusCode < 300)) {
+          let errorDetail = '';
+          try {
+            const errorText = buf.toString('utf8');
+            try {
+              const errorJson = JSON.parse(errorText);
+              errorDetail = errorJson.msg || errorJson.message || JSON.stringify(errorJson);
+            } catch {
+              errorDetail = errorText.slice(0, 200);
+            }
+          } catch {
+            errorDetail = '无法读取响应内容';
+          }
+          throw new Error(`请求失败 (${statusCode}): ${errorDetail || 'Unknown error'}`);
         }
-        
-        // Save file
-        const contentType = response.headers.get('content-type') || '';
-        const contentDisposition = response.headers.get('content-disposition') || '';
-        const ab = await response.arrayBuffer();
         
         // Check for small error response (sometimes API returns JSON error with 200 OK)
         let apiReplyDetail = '';
-        if (ab.byteLength < 500) { 
-           const text = new TextDecoder().decode(ab);
+        if (buf.byteLength < 500) { 
+           const text = buf.toString('utf8');
            try {
              const json = JSON.parse(text);
              if (json.code && json.code !== 200) {
@@ -135,7 +197,7 @@ async function processImport(month, structures, task, token) {
 
         const fileName = `${item.name}_${month}_${item.id}.xlsx`;
         const filePath = path.join(EXCEL_DIR, fileName);
-        fs.writeFileSync(filePath, Buffer.from(ab));
+        fs.writeFileSync(filePath, buf);
         
         const downloadUrl = `/storage/excel/${fileName}`;
 
@@ -144,7 +206,7 @@ async function processImport(month, structures, task, token) {
           type: item.type,
           name: item.name,
           status: 'info',
-          msg: `平台 API 已返回（HTTP ${response.status}，${ab.byteLength} bytes）`,
+          msg: `平台 API 已返回（HTTP ${statusCode}，${buf.byteLength} bytes）`,
           groupKey,
           detail: truncateText([contentType ? `Content-Type: ${contentType}` : '', contentDisposition ? `Content-Disposition: ${contentDisposition}` : '', apiReplyDetail ? `Reply: ${apiReplyDetail}` : ''].filter(Boolean).join('\n'))
         });
@@ -287,28 +349,24 @@ const fetchMonthExcel = async (month, type, id, token) => {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Authorization': token || ''
   };
-  const response = await fetch(url, { headers });
-  if (!response.ok) {
+  const { statusCode, contentType, contentDisposition, buffer } = await downloadExcelBuffer(url, headers);
+  if (!(statusCode >= 200 && statusCode < 300)) {
     let errorDetail = '';
     try {
-      const errorText = await response.text();
+      const errorText = buffer.toString('utf8');
       try {
         const errorJson = JSON.parse(errorText);
         errorDetail = errorJson.msg || errorJson.message || JSON.stringify(errorJson);
       } catch {
         errorDetail = errorText.slice(0, 200);
       }
-    } catch (e) {
+    } catch {
       errorDetail = '无法读取响应内容';
     }
-    throw new Error(`请求失败 (${response.status}): ${errorDetail || response.statusText}`);
+    throw new Error(`请求失败 (${statusCode}): ${errorDetail || 'Unknown error'}`);
   }
-  const contentType = response.headers.get('content-type') || '';
-  const contentDisposition = response.headers.get('content-disposition') || '';
-  const buffer = await response.arrayBuffer();
-  // Check for small error response
   if (buffer.byteLength < 500) {
-    const text = new TextDecoder().decode(buffer);
+    const text = buffer.toString('utf8');
     try {
       const json = JSON.parse(text);
       if (json.code && json.code !== 200) {
@@ -319,10 +377,10 @@ const fetchMonthExcel = async (month, type, id, token) => {
     }
   }
   return {
-    buffer: Buffer.from(buffer),
+    buffer,
     meta: {
       url,
-      httpStatus: response.status,
+      httpStatus: statusCode,
       contentType,
       contentDisposition,
       byteLength: buffer.byteLength
@@ -357,6 +415,10 @@ const mergeMonthlyBuffersToWorkbook = (buffers) => {
   for (const [name, aoa] of sheetsMap.entries()) {
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     XLSX.utils.book_append_sheet(outWb, ws, name);
+  }
+  if (outWb.SheetNames.length === 0) {
+    const ws = XLSX.utils.aoa_to_sheet([['无数据']]);
+    XLSX.utils.book_append_sheet(outWb, ws, '无数据');
   }
   return outWb;
 };
