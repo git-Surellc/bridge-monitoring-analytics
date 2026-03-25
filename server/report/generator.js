@@ -7,6 +7,9 @@ import fs from 'fs';
 
 // Try to register a font for Chinese support in ECharts
 // This is critical for Aliyun deployment where default fonts might be missing or not support Chinese
+const CHART_FONT_FAMILY = 'BridgeAnalyticsSans';
+const CHART_FONT_FAMILY_FALLBACK = `${CHART_FONT_FAMILY}, "WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Source Han Sans SC", "Hiragino Sans GB", "STHeiti", "Microsoft YaHei", sans-serif`;
+
 const registerCustomFont = () => {
   try {
     // Check common font paths
@@ -15,8 +18,15 @@ const registerCustomFont = () => {
       '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
       '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
       '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+      '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+      '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+      '/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf',
+      '/usr/share/fonts/truetype/arphic/ukai.ttc',
+      '/usr/share/fonts/truetype/arphic/uming.ttc',
       // Common Windows/Mac font paths (for local dev)
-      '/System/Library/Fonts/PingFang.ttc',
+      '/System/Library/Fonts/STHeiti Light.ttc',
+      '/System/Library/Fonts/STHeiti Medium.ttc',
+      '/System/Library/Fonts/Hiragino Sans GB.ttc',
       'C:\\Windows\\Fonts\\msyh.ttc',
       // Project local font (if we added one later)
       path.join(process.cwd(), 'assets', 'fonts', 'SimHei.ttf')
@@ -26,7 +36,7 @@ const registerCustomFont = () => {
     for (const fontPath of fontPaths) {
       if (fs.existsSync(fontPath)) {
         console.log(`Registering font: ${fontPath}`);
-        registerFont(fontPath, { family: 'sans-serif' });
+        registerFont(fontPath, { family: CHART_FONT_FAMILY });
         fontLoaded = true;
         break;
       }
@@ -213,10 +223,13 @@ export const generateChartImage = (sensor) => {
     const unit = getUnit(sensor);
     const option = {
       animation: false,
+      textStyle: {
+        fontFamily: CHART_FONT_FAMILY_FALLBACK,
+      },
       title: {
         text: `${formatSensorTitle(sensor)} 时程曲线（单位：${unit}）`,
         left: 'center',
-        textStyle: { fontSize: 16 }
+        textStyle: { fontSize: 16, fontFamily: CHART_FONT_FAMILY_FALLBACK }
       },
       grid: { top: 60, bottom: 40, left: 90, right: 30 },
       xAxis: {
@@ -239,7 +252,8 @@ export const generateChartImage = (sensor) => {
              return value;
           },
           rotate: 30, // Rotate labels to avoid overlap
-          fontSize: 10
+          fontSize: 10,
+          fontFamily: CHART_FONT_FAMILY_FALLBACK
         }
       },
       yAxis: {
@@ -248,7 +262,7 @@ export const generateChartImage = (sensor) => {
         name: `单位 (${unit})`,
         nameLocation: 'middle',
         nameGap: 45,
-        nameTextStyle: { fontSize: 12 }
+        nameTextStyle: { fontSize: 12, fontFamily: CHART_FONT_FAMILY_FALLBACK }
       },
       series: [
         {
@@ -323,30 +337,38 @@ export const generateCorrelationChartImage = (tempSensor, defSensor) => {
 
     const option = {
       animation: false,
+      textStyle: {
+        fontFamily: CHART_FONT_FAMILY_FALLBACK,
+      },
       title: {
         text: '温度-变形相关性分析',
         subtext: equation ? `拟合方程: ${equation}` : '',
         left: 'center',
-        textStyle: { fontSize: 16 }
+        textStyle: { fontSize: 16, fontFamily: CHART_FONT_FAMILY_FALLBACK }
       },
       grid: { top: 60, bottom: 40, left: 50, right: 30 },
       legend: {
         data: ['观测数据', '拟合曲线'],
-        top: 30
+        top: 30,
+        textStyle: { fontFamily: CHART_FONT_FAMILY_FALLBACK }
       },
       xAxis: {
         type: 'value',
         name: '温度 (°C)',
         nameLocation: 'middle',
         nameGap: 25,
-        scale: true
+        scale: true,
+        nameTextStyle: { fontFamily: CHART_FONT_FAMILY_FALLBACK },
+        axisLabel: { fontFamily: CHART_FONT_FAMILY_FALLBACK }
       },
       yAxis: {
         type: 'value',
         name: '变形 (mm)',
         nameLocation: 'middle',
         nameGap: 25,
-        scale: true
+        scale: true,
+        nameTextStyle: { fontFamily: CHART_FONT_FAMILY_FALLBACK },
+        axisLabel: { fontFamily: CHART_FONT_FAMILY_FALLBACK }
       },
       series: [
         {
