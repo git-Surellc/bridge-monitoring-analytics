@@ -20,6 +20,8 @@ interface StructureItem {
 
 export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }: ApiImporterProps) {
   const [isLoadingResults, setIsLoadingResults] = useState(false);
+  const [backendReachable, setBackendReachable] = useState(true);
+  const backendOriginRef = useRef<string | null>(null);
 
   // Auth State
   const [apiUsername, setApiUsername] = useState('');
@@ -111,6 +113,8 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
   
   // Track processed IDs to avoid re-parsing same file multiple times
   const processedIdsRef = useRef<Set<string>>(new Set());
+  const checkStatusInFlightRef = useRef(false);
+  const consecutiveStatusFailRef = useRef(0);
 
   const makeGroupKey = (id: string, type?: string) => `${id}-${type || '1'}`;
 
@@ -175,72 +179,128 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     });
   }, [logs, groupedLogs]);
   
-  // Helper to parse logs
-  const processLogs = async (newLogs: LogEntry[]) => {
-    for (const log of newLogs) {
-      // Use composite key for uniqueness check
-      const uniqueKey = `${log.id}-${log.type || '1'}`;
+  const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit | undefined, timeoutMs: number) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(input, { ...(init || {}), signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
 
-      // If success and has downloadUrl, and NOT processed yet
-      if ((log.status === 'success' || log.status === 'skipped') && log.downloadUrl && !processedIdsRef.current.has(uniqueKey)) {
+  const getStoredBackendOrigin = () => {
+    try {
+      const v = (localStorage.getItem('backend_origin') || '').trim();
+      return v || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const guessBackendOrigin = () => {
+    return `${window.location.protocol}//${window.location.hostname}:8008`;
+  };
+
+  const resolveBackendUrl = (url: string) => {
+    if (!url) return url;
+    if (/^https?:\/\//i.test(url)) return url;
+    if (!url.startsWith('/')) return url;
+    const origin = backendOriginRef.current || getStoredBackendOrigin();
+    if (!origin) return url;
+    return origin.replace(/\/$/, '') + url;
+  };
+
+  const smartFetch = async (url: string, init: RequestInit | undefined, timeoutMs: number) => {
+    const tryOnce = async (u: string) => fetchWithTimeout(u, init, timeoutMs);
+    try {
+      const res = await tryOnce(resolveBackendUrl(url));
+      return res;
+    } catch (err) {
+      if (!url.startsWith('/api') && !url.startsWith('/storage')) throw err;
+      if (backendOriginRef.current) throw err;
+      const guess = guessBackendOrigin();
+      try {
+        const res = await tryOnce(guess.replace(/\/$/, '') + url);
+        backendOriginRef.current = guess;
         try {
-          // Mark as processing to avoid race conditions
-          processedIdsRef.current.add(uniqueKey);
-
-          const fileRes = await fetch(log.downloadUrl);
-          if (!fileRes.ok) throw new Error('Download failed');
-          
-          const blob = await fileRes.arrayBuffer();
-          
-          // Use name from structureList (Excel) FIRST, then log.name (API), then ID
-          // Relaxed matching: First try exact ID+Type match, then fallback to ID match if unique in Excel
-          let matchedStructure = structureList.find(s => s.id === log.id && (s.type === log.type || !log.type));
-          
-          if (!matchedStructure) {
-             // Fallback: Check if ID exists in Excel list (ignoring type mismatch if only one entry exists)
-             const candidates = structureList.filter(s => s.id === log.id);
-             if (candidates.length > 0) {
-               matchedStructure = candidates[0];
-             }
-          }
-
-          const name = matchedStructure?.name || log.name || log.id;
-          
-          const parsedData = await parseExcelArrayBuffer(blob, name);
-          parsedData.id = log.id;
-          parsedData.name = name;
-          parsedData.type = log.type;
-          
-          // Update parent
-          onImport([parsedData]);
-          
-        } catch (e) {
-          console.error(`Failed to parse ${log.id}`, e);
-          // Allow retry by removing from set? 
-          // Maybe not automatically. User can click retry if needed.
-          processedIdsRef.current.delete(uniqueKey);
-        }
+          localStorage.setItem('backend_origin', guess);
+        } catch {}
+        return res;
+      } catch (e2) {
+        throw e2;
       }
     }
-    
-    setIsLoadingResults(false);
+  };
+
+  // Helper to parse logs
+  const processLogs = async (newLogs: LogEntry[]) => {
+    try {
+      for (const log of newLogs) {
+        const uniqueKey = `${log.id}-${log.type || '1'}`;
+
+        if ((log.status === 'success' || log.status === 'skipped') && log.downloadUrl && !processedIdsRef.current.has(uniqueKey)) {
+          try {
+            processedIdsRef.current.add(uniqueKey);
+
+            let fileRes: Response | null = null;
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              try {
+                fileRes = await smartFetch(log.downloadUrl, undefined, 20000);
+                break;
+              } catch (err) {
+                if (attempt === 1) throw err;
+              }
+            }
+
+            if (!fileRes || !fileRes.ok) throw new Error('Download failed');
+
+            const blob = await fileRes.arrayBuffer();
+
+            let matchedStructure = structureList.find(s => s.id === log.id && (s.type === log.type || !log.type));
+            if (!matchedStructure) {
+              const candidates = structureList.filter(s => s.id === log.id);
+              if (candidates.length > 0) matchedStructure = candidates[0];
+            }
+
+            const name = matchedStructure?.name || log.name || log.id;
+
+            const parsedData = await parseExcelArrayBuffer(blob, name);
+            parsedData.id = log.id;
+            parsedData.name = name;
+            parsedData.type = log.type;
+
+            onImport([parsedData]);
+          } catch (e) {
+            processedIdsRef.current.delete(uniqueKey);
+          }
+        }
+      }
+    } finally {
+      setIsLoadingResults(false);
+    }
   };
 
   useEffect(() => {
+    backendOriginRef.current = getStoredBackendOrigin();
+
     // Check auth status on mount
-    fetch('/api/auth/status')
-      .then(res => res.json())
+    smartFetch('/api/auth/status', undefined, 8000)
+      .then(res => res.ok ? res.json() : null)
       .then(data => {
-        setHasToken(data.hasToken);
+        if (!data) return;
+        setHasToken(!!data.hasToken);
         if (data.username) setApiUsername(data.username);
         if (!data.hasToken) setShowAuthInput(true);
       })
-      .catch(console.error);
+      .catch(() => {
+        setBackendReachable(false);
+      });
 
     // Check for any global active task on mount
     const checkActive = async () => {
       try {
-        const res = await fetch('/api/import/active');
+        const res = await smartFetch('/api/import/active', undefined, 8000);
         if (res.ok) {
           const task = await res.json();
           // Only switch month if there is an ACTIVELY RUNNING task
@@ -261,7 +321,7 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
           }
         }
       } catch (e) {
-        console.error('Failed to check active task', e);
+        setBackendReachable(false);
       }
     };
     checkActive();
@@ -274,11 +334,11 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     }
     setAuthLoading(true);
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await smartFetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: apiUsername, password: apiPassword })
-      });
+      }, 15000);
       if (!res.ok) throw new Error('Auth failed');
       setHasToken(true);
       setShowAuthInput(false);
@@ -298,19 +358,19 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     // Poll every 3 seconds
     const interval = setInterval(() => {
       checkStatus();
-    }, 3000);
+    }, backendReachable ? 3000 : 15000);
     return () => clearInterval(interval);
-  }, [month, periodType, year, quarter]); 
+  }, [month, periodType, year, quarter, backendReachable]); 
 
   const handleStop = async () => {
     if (!confirm('确定要停止当前导入任务吗？已完成的项目将保留。')) return;
     
     try {
-      const res = await fetch('/api/import/stop', {
+      const res = await smartFetch('/api/import/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month: getPeriodKey() })
-      });
+      }, 8000);
       if (!res.ok) throw new Error('停止失败');
       
       setIsProcessing(false);
@@ -321,17 +381,21 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
   }; 
 
   const checkStatus = async () => {
+    if (checkStatusInFlightRef.current) return;
+    checkStatusInFlightRef.current = true;
     try {
-      const res = await fetch(`/api/import/status?month=${getPeriodKey()}`, {
+      const res = await smartFetch(`/api/import/status?month=${getPeriodKey()}`, {
         cache: 'no-store',
         headers: {
           'Cache-Control': 'no-cache'
         }
-      });
+      }, 8000);
       if (res.status === 304) return;
       if (!res.ok) return;
       
       const data = await res.json();
+      consecutiveStatusFailRef.current = 0;
+      if (!backendReachable) setBackendReachable(true);
       
       if (data.status === 'running' || data.status === 'completed' || data.status === 'stopped') {
         // If we just loaded and found a completed task, DO NOT set wasProcessing to true implicitly
@@ -359,7 +423,12 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
         setIsProcessing(false);
       }
     } catch (e) {
-      // Ignore error if backend not reachable yet
+      consecutiveStatusFailRef.current += 1;
+      if (consecutiveStatusFailRef.current >= 2) {
+        setBackendReachable(false);
+      }
+    } finally {
+      checkStatusInFlightRef.current = false;
     }
   };
 
@@ -428,11 +497,11 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
         url = '/api/import/start-year';
         body = { year, structures: structureList };
       }
-      const res = await fetch(url, {
+      const res = await smartFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
-      });
+      }, 15000);
       
       if (!res.ok) {
         const err = await res.json();
@@ -458,11 +527,11 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     processedIdsRef.current.delete(`${item.id}-${item.type || '1'}`);
 
     try {
-      await fetch('/api/import/retry', {
+      await smartFetch('/api/import/retry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month, structureId: item.id })
-      });
+      }, 15000);
       // Polling will update status
     } catch (e) {
       console.error(e);

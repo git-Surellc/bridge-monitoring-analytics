@@ -4,6 +4,13 @@
 
 ## 📅 更新日志 (Changelog)
 
+### v1.3.16 (2026-04-07 v27)
+*   **🚀 稳定性**：上线环境支持“后端直连兜底”（当 7100 未正确反代 `/api`/`/storage` 时，前端会自动尝试直连 `:8008` 并缓存后端地址），减少 `ERR_EMPTY_RESPONSE/ERR_CONNECTION_RESET`。
+*   **🚀 稳定性**：API 导入轮询增加超时、并发保护、失败降频，避免网络异常时页面卡死/刷屏。
+*   **⚡ 性能优化**：分析报表的时程曲线增加浏览器端缓存（同结构同日期范围再次打开直接加载缓存图，避免重复绘图）。
+*   **📝 导出优化**：导出 Word 前对时程序列做抽稀，减少大请求体导致的连接重置；导出请求/轮询增加超时保护。
+*   **🐳 Docker**：修正 Dockerfile 暴露端口为 `8008`。
+
 ### v1.3.15 (2026-03-25 v26)
 *   **🐛 修复**：Ubuntu 部署环境导出 Word 时程图中文乱码（服务端图表渲染增加中文字体注册与回退）。
 
@@ -218,6 +225,95 @@
     ```bash
     npm run dev
     ```
+
+## 🌐 部署说明（重要）
+
+### 1）前后端关系与端口
+*   **后端 (Express)**：默认端口 `8008`，负责：
+    *   `/api/*`：所有业务接口（导入任务、设备状态、报告生成等）
+    *   `/storage/*`：Excel/报告等文件下载
+*   **前端 (React/Vite)**：
+    *   本地开发：`npm run dev` 默认端口 `3008`，并通过 Vite 代理把 `/api` 转到 `http://localhost:8008`（见 `vite.config.ts`）
+    *   线上：可以“单体部署”（只跑后端）或“前后端分离”（前端 7100 + 反代后端 8008）
+
+### 2）推荐部署方式 A：单体部署（最省心）
+*   只需要启动后端：`npm start`（等同 `node server/index.js`）
+*   后端会在存在 `dist/` 时自动托管前端静态页面（同一端口访问）
+*   访问地址：`http://<服务器IP>:8008`
+
+### 3）部署方式 B：前后端分离（前端 7100 + 后端 8008）
+如果你把前端静态页面部署在 `7100`（例如 Nginx/宝塔静态站），必须配置反向代理：
+*   `/api/` 代理到 `http://127.0.0.1:8008`
+*   `/storage/` 代理到 `http://127.0.0.1:8008`
+
+否则会出现：
+*   `ERR_EMPTY_RESPONSE / ERR_CONNECTION_RESET`（连接被断开）
+*   `/api/import/status`、`/api/auth/status`、`/api/reports/generate` 等请求失败
+*   导入轮询刷屏、导出 Word 失败、报表加载卡住
+
+#### Nginx 参考配置（可直接改 IP/端口）
+```nginx
+server {
+  listen 7100;
+  server_name _;
+
+  root /var/www/bridge-monitoring-analytics/dist;
+  index index.html;
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+
+  location /api/ {
+    proxy_pass http://127.0.0.1:8008;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+  }
+
+  location /storage/ {
+    proxy_pass http://127.0.0.1:8008;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+  }
+
+  client_max_body_size 200m;
+}
+```
+
+### 4）Docker 部署（可选）
+*   构建并运行：
+    ```bash
+    docker build -t bridge-monitoring-analytics .
+    docker run -d --restart=always -p 8008:8008 --name bridge-monitoring-analytics bridge-monitoring-analytics
+    ```
+*   持久化（推荐）：
+    ```bash
+    docker run -d --restart=always -p 8008:8008 \
+      -v $(pwd)/storage:/app/storage \
+      -v $(pwd)/database.sqlite:/app/database.sqlite \
+      --name bridge-monitoring-analytics bridge-monitoring-analytics
+    ```
+
+### 5）环境变量（常用）
+*   `PORT`：后端端口（默认 `8008`）
+*   `DATABASE_PATH`：SQLite 路径（默认项目根目录 `database.sqlite`）
+*   `AUTH_MODE`：认证模式（`optional`/`required`/`disabled`，默认 `optional`）
+*   `DIRECTUS_URL`、`DIRECTUS_TOKEN`：启用 Directus 认证/数据时使用
+
+### 6）常见报错快速排查
+*   `GET http://<IP>:7100/api/... 404`：7100 没有反代 `/api` 到 8008（需要按上面 Nginx 配置）
+*   `ERR_EMPTY_RESPONSE / ERR_CONNECTION_RESET`：反代超时/大小限制/后端进程重启，优先检查 Nginx 超时与 `client_max_body_size`，以及后端是否稳定运行在 8008
+*   导出 Word 失败：通常是后端不可达（`/api/reports/generate`）或反代限制导致连接被断开
     *   默认访问 `http://localhost:3008`（若端口占用会自动递增）
 
 ### 部署 (Deployment)

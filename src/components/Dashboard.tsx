@@ -14,6 +14,77 @@ import { AnalysisConfig, analyzeStructure, analyzeWithAI, StructureAnalysisResul
 
 const getStructureKey = (structure: StructureData) => `${structure.id}-${structure.type || '1'}`;
 
+const fnv1a = (input: string) => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
+};
+
+const getSensorDataFingerprint = (data: any) => {
+  if (!Array.isArray(data) || data.length === 0) return 'empty';
+  const first = data[0];
+  const last = data[data.length - 1];
+  const raw = `${data.length}|${String(first?.time ?? '')}|${String(last?.time ?? '')}|${String(first?.value ?? '')}|${String(last?.value ?? '')}`;
+  return fnv1a(raw);
+};
+
+const buildChartCacheKey = (structure: StructureData, sensorId: string, data: any) => {
+  const structureKey = getStructureKey(structure);
+  const structureName = String(structure.name || '');
+  const fp = getSensorDataFingerprint(data);
+  return `chart:v1:${structureKey}:${structureName}:${sensorId}:${fp}`;
+};
+
+const downsampleSeries = (data: any, maxPoints: number) => {
+  if (!Array.isArray(data)) return [];
+  const n = data.length;
+  if (n <= maxPoints) {
+    return data.map((d: any) => ({ time: d?.time, value: d?.value }));
+  }
+  const step = Math.ceil(n / maxPoints);
+  const sampled: Array<{ time: any; value: any }> = [];
+  for (let i = 0; i < n; i += step) {
+    const d = data[i];
+    sampled.push({ time: d?.time, value: d?.value });
+  }
+  const last = data[n - 1];
+  const lastPoint = { time: last?.time, value: last?.value };
+  const lastSampled = sampled[sampled.length - 1];
+  if (!lastSampled || lastSampled.time !== lastPoint.time || lastSampled.value !== lastPoint.value) {
+    sampled.push(lastPoint);
+  }
+  return sampled;
+};
+
+const compactStructureForExport = (structure: any, maxPointsPerSensor: number) => {
+  const sensors = Array.isArray(structure?.sensors) ? structure.sensors : [];
+  const compactSensors = sensors.map((sensor: any) => ({
+    id: sensor?.id,
+    name: sensor?.name,
+    unit: sensor?.unit,
+    deviceType: sensor?.deviceType,
+    sheetType: sensor?.sheetType,
+    sensorType: sensor?.sensorType,
+    alarmThreshold: sensor?.alarmThreshold,
+    data: downsampleSeries(sensor?.data, maxPointsPerSensor),
+    stats: sensor?.stats,
+  }));
+  return { ...structure, sensors: compactSensors };
+};
+
+const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit | undefined, timeoutMs: number) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...(init || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 interface DashboardProps {
   structures: StructureData[];
   importLogs?: LogEntry[];
@@ -105,6 +176,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     return saved ? JSON.parse(saved) : {};
   });
   const [showIndicatorSelect, setShowIndicatorSelect] = useState(false);
+  const backendOriginRef = useRef<string | null>(null);
 
   const allDeviceTypes = React.useMemo(() => {
     const set = new Set<string>();
@@ -116,6 +188,42 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     }
     return set;
   }, [processedStructures]);
+
+  useEffect(() => {
+    try {
+      const v = (localStorage.getItem('backend_origin') || '').trim();
+      backendOriginRef.current = v || null;
+    } catch {
+      backendOriginRef.current = null;
+    }
+  }, []);
+
+  const guessBackendOrigin = () => `${window.location.protocol}//${window.location.hostname}:8008`;
+
+  const resolveBackendUrl = (url: string) => {
+    if (!url) return url;
+    if (/^https?:\/\//i.test(url)) return url;
+    if (!url.startsWith('/')) return url;
+    const origin = backendOriginRef.current;
+    if (!origin) return url;
+    return origin.replace(/\/$/, '') + url;
+  };
+
+  const smartFetch = async (url: string, init: RequestInit | undefined, timeoutMs: number) => {
+    try {
+      return await fetchWithTimeout(resolveBackendUrl(url), init, timeoutMs);
+    } catch (err) {
+      if (!url.startsWith('/api') && !url.startsWith('/storage')) throw err;
+      if (backendOriginRef.current) throw err;
+      const guess = guessBackendOrigin();
+      const res = await fetchWithTimeout(guess.replace(/\/$/, '') + url, init, timeoutMs);
+      backendOriginRef.current = guess;
+      try {
+        localStorage.setItem('backend_origin', guess);
+      } catch {}
+      return res;
+    }
+  };
 
   const DEVICE_PRESETS = React.useMemo(() => {
     return {
@@ -566,12 +674,12 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s frontend timeout
 
-      const res = await fetch('/api/devices/status', {
+      const res = await smartFetch('/api/devices/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ structures: structureList }),
         signal: controller.signal
-      });
+      }, 15000);
       
       clearTimeout(timeoutId);
       
@@ -708,11 +816,12 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
         // 1. Submit task to backend
         // Enrich structures with AI analysis results and algorithm results
+        const maxPointsPerSensor = 1200;
         const bridgesWithAi = selectedStructures.map(s => {
           const key = getStructureKey(s);
           const displayStructure = getDisplayStructure(s);
           return {
-            ...displayStructure,
+            ...compactStructureForExport(displayStructure, maxPointsPerSensor),
             aiAnalysis: aiResults[key] || null,
             analysis: analysisResults[key] || null
           };
@@ -727,7 +836,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
               const key = getStructureKey(s);
               const displayStructure = getDisplayStructure(s);
               return {
-                ...displayStructure,
+                ...compactStructureForExport(displayStructure, maxPointsPerSensor),
                 aiAnalysis: aiResults[key] || null,
                 analysis: analysisResults[key] || null
               };
@@ -735,7 +844,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
           }));
         }
 
-        const response = await fetch('/api/reports/generate', {
+        const response = await smartFetch('/api/reports/generate', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -747,11 +856,15 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
             sections: template.sections,
             deviceStatuses: currentStatuses,
           }),
-        });
+        }, 60000);
 
 
         if (!response.ok) {
-          throw new Error(`Failed to start task: ${response.statusText}`);
+          let detail = '';
+          try {
+            detail = await response.text();
+          } catch {}
+          throw new Error(`Failed to start task: ${response.status} ${response.statusText}${detail ? ` - ${detail}` : ''}`);
         }
 
         const { taskId } = await response.json();
@@ -763,7 +876,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
           if (done || inFlight) return;
           inFlight = true;
           try {
-            const statusRes = await fetch(`/api/reports/task/${taskId}`);
+            const statusRes = await smartFetch(`/api/reports/task/${taskId}`, undefined, 8000);
             if (!statusRes.ok) return;
             
             const task = await statusRes.json();
@@ -774,7 +887,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
               setExportProgress('下载中...');
               
               const link = document.createElement('a');
-              link.href = task.downloadUrl;
+              link.href = resolveBackendUrl(task.downloadUrl);
               link.download = task.fileName;
               document.body.appendChild(link);
               link.click();
@@ -803,7 +916,12 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
       } catch (error) {
         console.error("Export failed", error);
-        alert("Failed to export report: " + (error instanceof Error ? error.message : 'Unknown error'));
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        if (msg.includes('Failed to fetch') || msg.includes('ERR_CONNECTION_RESET') || msg.includes('abort')) {
+          alert('导出失败：后端接口连接异常（常见原因：7100 未正确反代 /api，或后端服务未运行/被重启）。');
+        } else {
+          alert("Failed to export report: " + msg);
+        }
         setIsExporting(false);
         setExportProgress('');
       }
@@ -1798,6 +1916,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                             structure.sensors.map((sensor, sensorIdx) => {
                                           const sensorKey = `${structureKey}-${sensor.id}`;
                                           const displaySensor = getDisplaySensor(structureKey, sensor);
+                                          const chartCacheKey = buildChartCacheKey(structure, sensor.id, displaySensor?.data);
                                           const displaySensorName = `${sensorIdx + 1}）${formatSensorTitleForPreview(sensor)}`;
                                               return (
                                                 <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
@@ -1819,6 +1938,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                                    <SensorChart 
                                                  sensor={displaySensor} 
                                                      color="#2563eb" 
+                                                     cacheKey={chartCacheKey}
                                                    />
                                                 </div>
                                               );
@@ -1945,6 +2065,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                     structure.sensors.map((sensor, sensorIdx) => {
                                       const sensorKey = `${structureKey}-${sensor.id}`;
                                       const displaySensor = getDisplaySensor(structureKey, sensor);
+                                      const chartCacheKey = buildChartCacheKey(structure, sensor.id, displaySensor?.data);
                                       const displaySensorName = `${sensorIdx + 1}）${formatSensorTitleForPreview(sensor)}`;
                                       return (
                                         <div key={sensor.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
@@ -1966,6 +2087,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                            <SensorChart 
                                              sensor={displaySensor} 
                                              color="#2563eb" 
+                                             cacheKey={chartCacheKey}
                                            />
                                         </div>
                                       );

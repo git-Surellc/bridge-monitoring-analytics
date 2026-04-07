@@ -10,6 +10,6 @@ COPY . .
 # Build frontend
 RUN npm run build
 
-EXPOSE 8888
+EXPOSE 8008
 
 CMD ["npm", "start"]
