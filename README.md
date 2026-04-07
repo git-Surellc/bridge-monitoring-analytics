@@ -4,8 +4,11 @@
 
 ## 📅 更新日志 (Changelog)
 
+### v1.3.17 (2026-04-07 v28)
+*   **🛠️ 修复**：移除“自动猜测直连 :8008 后端”的兜底逻辑（该逻辑在 FRP/反代场景会导致浏览器错误直连 8008，从而出现 `ERR_EMPTY_RESPONSE`）。如需直连后端，请手动设置 `localStorage.backend_origin`。
+
 ### v1.3.16 (2026-04-07 v27)
-*   **🚀 稳定性**：上线环境支持“后端直连兜底”（当 7100 未正确反代 `/api`/`/storage` 时，前端会自动尝试直连 `:8008` 并缓存后端地址），减少 `ERR_EMPTY_RESPONSE/ERR_CONNECTION_RESET`。
+*   **🚀 稳定性**：上线环境支持“手动配置后端地址”（通过 `localStorage.backend_origin` 指定后端 origin），便于部分内网/隧道场景快速排障。
 *   **🚀 稳定性**：API 导入轮询增加超时、并发保护、失败降频，避免网络异常时页面卡死/刷屏。
 *   **⚡ 性能优化**：分析报表的时程曲线增加浏览器端缓存（同结构同日期范围再次打开直接加载缓存图，避免重复绘图）。
 *   **📝 导出优化**：导出 Word 前对时程序列做抽稀，减少大请求体导致的连接重置；导出请求/轮询增加超时保护。
@@ -314,6 +317,7 @@ server {
 *   `GET http://<IP>:7100/api/... 404`：7100 没有反代 `/api` 到 8008（需要按上面 Nginx 配置）
 *   `ERR_EMPTY_RESPONSE / ERR_CONNECTION_RESET`：反代超时/大小限制/后端进程重启，优先检查 Nginx 超时与 `client_max_body_size`，以及后端是否稳定运行在 8008
 *   导出 Word 失败：通常是后端不可达（`/api/reports/generate`）或反代限制导致连接被断开
+*   浏览器误请求 `http://<IP>:8008/api/...`：通常是浏览器残留了 `localStorage.backend_origin`（手动直连配置）。可在控制台执行 `localStorage.removeItem('backend_origin')` 后强刷（Ctrl+F5）再试。
     *   默认访问 `http://localhost:3008`（若端口占用会自动递增）
 
 ### 部署 (Deployment)

@@ -198,10 +198,6 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     }
   };
 
-  const guessBackendOrigin = () => {
-    return `${window.location.protocol}//${window.location.hostname}:8008`;
-  };
-
   const resolveBackendUrl = (url: string) => {
     if (!url) return url;
     if (/^https?:\/\//i.test(url)) return url;
@@ -212,25 +208,7 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
   };
 
   const smartFetch = async (url: string, init: RequestInit | undefined, timeoutMs: number) => {
-    const tryOnce = async (u: string) => fetchWithTimeout(u, init, timeoutMs);
-    try {
-      const res = await tryOnce(resolveBackendUrl(url));
-      return res;
-    } catch (err) {
-      if (!url.startsWith('/api') && !url.startsWith('/storage')) throw err;
-      if (backendOriginRef.current) throw err;
-      const guess = guessBackendOrigin();
-      try {
-        const res = await tryOnce(guess.replace(/\/$/, '') + url);
-        backendOriginRef.current = guess;
-        try {
-          localStorage.setItem('backend_origin', guess);
-        } catch {}
-        return res;
-      } catch (e2) {
-        throw e2;
-      }
-    }
+    return fetchWithTimeout(resolveBackendUrl(url), init, timeoutMs);
   };
 
   // Helper to parse logs

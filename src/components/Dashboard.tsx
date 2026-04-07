@@ -198,8 +198,6 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     }
   }, []);
 
-  const guessBackendOrigin = () => `${window.location.protocol}//${window.location.hostname}:8008`;
-
   const resolveBackendUrl = (url: string) => {
     if (!url) return url;
     if (/^https?:\/\//i.test(url)) return url;
@@ -210,19 +208,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
   };
 
   const smartFetch = async (url: string, init: RequestInit | undefined, timeoutMs: number) => {
-    try {
-      return await fetchWithTimeout(resolveBackendUrl(url), init, timeoutMs);
-    } catch (err) {
-      if (!url.startsWith('/api') && !url.startsWith('/storage')) throw err;
-      if (backendOriginRef.current) throw err;
-      const guess = guessBackendOrigin();
-      const res = await fetchWithTimeout(guess.replace(/\/$/, '') + url, init, timeoutMs);
-      backendOriginRef.current = guess;
-      try {
-        localStorage.setItem('backend_origin', guess);
-      } catch {}
-      return res;
-    }
+    return fetchWithTimeout(resolveBackendUrl(url), init, timeoutMs);
   };
 
   const DEVICE_PRESETS = React.useMemo(() => {
