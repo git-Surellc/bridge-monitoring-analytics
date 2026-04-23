@@ -145,6 +145,36 @@ app.post('/api/import/retry', async (req, res) => {
   }
 });
 
+// Retry all failed items for a period (month/quarter/year key)
+app.post('/api/import/retry-failed', async (req, res) => {
+  const { month } = req.body;
+  if (!month) return res.status(400).json({ error: 'Month is required' });
+
+  try {
+    const failed = db.prepare(
+      "SELECT structure_id, structure_name, structure_type FROM imports WHERE month = ? AND status = 'error' ORDER BY id ASC"
+    ).all(month);
+
+    if (!failed || failed.length === 0) {
+      return res.json({ message: 'No failed items', count: 0 });
+    }
+
+    const tokenRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('api_token');
+    const token = tokenRow ? tokenRow.value : null;
+
+    const structures = failed.map((r) => ({
+      id: r.structure_id,
+      name: r.structure_name || r.structure_id,
+      type: r.structure_type || '1'
+    }));
+
+    startImportTask(month, structures, token);
+    res.json({ message: 'Retry failed items started', count: structures.length, month });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Login Endpoint
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { StructureData, LogEntry } from '../types';
 import { parseExcelArrayBuffer } from '../utils/excel';
-import { Loader2, CheckCircle, AlertCircle, Play, FileInput, Bug, Download, ArrowRight, Lock, Unlock, Key, StopCircle } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Play, FileInput, Bug, Download, ArrowRight, Lock, Unlock, Key, StopCircle, RefreshCw } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface ApiImporterProps {
@@ -22,6 +22,7 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [backendReachable, setBackendReachable] = useState(true);
   const backendOriginRef = useRef<string | null>(null);
+  const [isRetryingFailed, setIsRetryingFailed] = useState(false);
 
   // Auth State
   const [apiUsername, setApiUsername] = useState('');
@@ -146,6 +147,10 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
         return { ...g, finalEntry, isDone, status };
       });
   }, [logs]);
+
+  const failedGroups = React.useMemo(() => {
+    return groupedLogs.filter((g) => g.isDone && (g.status === 'error'));
+  }, [groupedLogs]);
 
   useEffect(() => {
     if (logs.length === 0) {
@@ -508,11 +513,36 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
       await smartFetch('/api/import/retry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month, structureId: item.id })
+        body: JSON.stringify({ month: getPeriodKey(), structureId: item.id })
       }, 15000);
       // Polling will update status
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleRetryFailedAll = async () => {
+    if (failedGroups.length === 0) return;
+    if (!confirm(`确定要一键重试失败的 ${failedGroups.length} 个结构吗？`)) return;
+
+    setIsRetryingFailed(true);
+    try {
+      const res = await smartFetch('/api/import/retry-failed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ month: getPeriodKey() })
+      }, 15000);
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || '重试启动失败');
+      }
+      setIsProcessing(true);
+      setLogs(prev => [...prev, { id: 'System', status: 'info', msg: `已启动失败项重试：${data.count || failedGroups.length} 个` }]);
+    } catch (err) {
+      alert('一键重试失败: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setIsRetryingFailed(false);
     }
   };
 
@@ -756,6 +786,20 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
           >
             <StopCircle className="w-4 h-4" />
             停止导入
+          </button>
+        )}
+
+        {!isProcessing && failedGroups.length > 0 && (
+          <button
+            onClick={handleRetryFailedAll}
+            disabled={isRetryingFailed}
+            className={cn(
+              "flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white py-2.5 rounded-lg font-medium transition-colors col-span-1",
+              isRetryingFailed && "opacity-50 cursor-not-allowed"
+            )}
+          >
+            {isRetryingFailed ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {isRetryingFailed ? '重试启动中...' : `一键重试失败项（${failedGroups.length}）`}
           </button>
         )}
 

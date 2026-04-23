@@ -51,13 +51,29 @@ export function FileManager() {
   const [filterQuarterYear, setFilterQuarterYear] = useState('');
   const [filterQuarter, setFilterQuarter] = useState<'Q1' | 'Q2' | 'Q3' | 'Q4' | ''>('');
 
+  const normalizeFilesPayload = (payload: any): ImportedFile[] => {
+    if (Array.isArray(payload)) return payload as ImportedFile[];
+    const maybeImports = payload?.imports;
+    if (Array.isArray(maybeImports)) return maybeImports as ImportedFile[];
+    const maybeFiles = payload?.files;
+    if (Array.isArray(maybeFiles)) return maybeFiles as ImportedFile[];
+    return [];
+  };
+
+  const normalizeReportsPayload = (payload: any): ReportTask[] => {
+    if (Array.isArray(payload)) return payload as ReportTask[];
+    const maybeReports = payload?.reports;
+    if (Array.isArray(maybeReports)) return maybeReports as ReportTask[];
+    return [];
+  };
+
   const fetchFiles = async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/files');
       if (!res.ok) throw new Error('Failed to fetch files');
       const data = await res.json();
-      setFiles(data);
+      setFiles(normalizeFilesPayload(data));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -71,7 +87,7 @@ export function FileManager() {
       const res = await fetch('/api/reports');
       if (!res.ok) throw new Error('Failed to fetch reports');
       const data = await res.json();
-      setReports(data);
+      setReports(normalizeReportsPayload(data));
     } catch (err) {
       console.error(err);
     } finally {
@@ -99,7 +115,7 @@ export function FileManager() {
         const res = await fetch('/api/reports');
         if (res.ok) {
           const data = await res.json();
-          setReports(data);
+          setReports(normalizeReportsPayload(data));
         }
       } catch (err) {
         console.error(err);
