@@ -12,8 +12,8 @@ export interface AnalysisConfig {
   enableTemperature: boolean;
   enableCrack: boolean;
   enableCorrelation: boolean;
-  enableAi: boolean;
   enableDenoise?: boolean;
+  hideInclinometerTemperature?: boolean;
 }
 
 export interface DataPoint {
@@ -90,12 +90,6 @@ export interface CrackAnalysisResult {
   predictedWidth7d: number;
   rSquared: number;
   riskLevel: string;
-}
-
-export interface AiAnalysisResult {
-  structureId: string;
-  analysis: string;
-  timestamp: string;
 }
 
 export interface StructureAnalysisResult {
@@ -488,73 +482,21 @@ export const getSensorType = (sensor: SensorData): string | null => {
   if (KEYWORDS.ACCELERATION.some(k => text.includes(k))) return 'acceleration';
   if (KEYWORDS.TEMPERATURE.some(k => text.includes(k))) return 'temperature';
   if (KEYWORDS.CRACK.some(k => text.includes(k))) return 'crack';
-  
+
   return null; // or 'other'
 };
 
-// ==========================================
-// AI Analysis
-// ==========================================
+const INCLINOMETER_KEYWORDS = ['盒式固定测斜仪', '固定测斜仪', '测斜仪'];
+const TEMPERATURE_COLUMN_KEYWORDS = ['温度', 'temperature', 'temp'];
 
-export const generateAiPrompt = (structure: StructureData, analysis: StructureAnalysisResult): string => {
-  const summary = [];
-  summary.push(`Structure: ${structure.name} (ID: ${structure.id})`);
-  
-  // Add key stats
-  Object.entries(analysis.quality).forEach(([id, q]) => {
-    summary.push(`Sensor ${id}: Outlier Rate ${(q.outlierRate * 100).toFixed(3)}%, CV ${q.cv.toFixed(3)}`);
-  });
-  
-  // Add trends
-  Object.entries(analysis.trend).forEach(([id, t]) => {
-    if (t.trendDesc !== 'stable') {
-      summary.push(`Sensor ${id} is ${t.trendDesc} (p=${t.pValue.toFixed(3)})`);
-    }
-  });
-
-  return `Analyze the structural health based on this data:\n${summary.join('\n')}\nProvide a brief assessment and recommendations.`;
+export const isInclinometerSheet = (sensor: SensorData): boolean => {
+  const sheetText = `${sensor.sheetType || ''} ${sensor.deviceType || ''}`.toLowerCase();
+  return INCLINOMETER_KEYWORDS.some((k) => sheetText.includes(k.toLowerCase()));
 };
 
-export const generateOverallSummaryPrompt = (structures: StructureData[]): string => {
-  return `Please summarize the structural health of the following ${structures.length} structures:
-${structures.map(s => `- ${s.name} (ID: ${s.id})`).join('\n')}
-Based on the detailed analysis provided for each.`;
-};
-
-export const callAiApi = async (prompt: string, config: any): Promise<string> => {
-    try {
-        const response = await fetch(`${config.baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${config.apiKey}`
-            },
-            body: JSON.stringify({
-                model: config.model,
-                messages: [{ role: 'user', content: prompt }]
-            })
-        });
-        const data = await response.json();
-        return data.choices?.[0]?.message?.content || "No response from AI.";
-    } catch (error) {
-        console.error("AI API Call Error:", error);
-        throw error;
-    }
-};
-
-export const analyzeWithAI = async (structure: StructureData, aiConfig: any): Promise<string> => {
-    const analysis = analyzeStructure(structure, {
-        enableGlobal: true,
-        enableAi: true,
-        enableInclination: true,
-        enableDisplacement: true,
-        enableAcceleration: true,
-        enableTemperature: true,
-        enableCrack: true,
-        enableCorrelation: true
-    });
-    const prompt = generateAiPrompt(structure, analysis);
-    return callAiApi(prompt, aiConfig);
+export const isTemperatureColumn = (sensor: SensorData): boolean => {
+  const name = String(sensor.name || '').toLowerCase();
+  return TEMPERATURE_COLUMN_KEYWORDS.some((k) => name.includes(k.toLowerCase()));
 };
 
 // ==========================================

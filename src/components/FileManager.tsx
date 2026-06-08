@@ -491,12 +491,12 @@ export function FileManager() {
                       <div className="font-medium">{file.structure_name || '-'}</div>
                       <div className="text-xs text-gray-400">{file.structure_id}</div>
                     </td>
-                    <td className="px-6 py-4 text-gray-600">
+                    <td className="px-6 py-4 text-gray-600 whitespace-nowrap">
                       {file.structure_type === '1' ? '结构' : file.structure_type === '2' ? '隧道' : '边坡'}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 whitespace-nowrap">
                       <span className={cn(
-                        "px-2.5 py-0.5 rounded-full text-xs font-medium border",
+                        "px-2.5 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap",
                         file.status === 'success' ? "bg-green-50 text-green-700 border-green-200" :
                         file.status === 'error' ? "bg-red-50 text-red-700 border-red-200" :
                         "bg-yellow-50 text-yellow-700 border-yellow-200"
@@ -514,9 +514,9 @@ export function FileManager() {
                         file.file_path ? file.file_path.split(/[/\\]/).pop() : '-'
                       )}
                     </td>
-                    <td className="px-6 py-4 text-right space-x-2">
+                    <td className="px-6 py-4 text-right whitespace-nowrap space-x-2">
                       {file.status === 'success' && (
-                        <a 
+                        <a
                           href={getDownloadUrl(file)}
                           download
                           className="text-blue-600 hover:text-blue-900 inline-flex items-center gap-1"
@@ -572,15 +572,15 @@ export function FileManager() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-1 max-w-[200px]">
-                        <div className="flex justify-between items-center text-xs">
+                        <div className="flex justify-between items-center text-xs gap-2">
                           <span className={cn(
-                            "font-medium",
+                            "font-medium whitespace-nowrap",
                             report.status === 'completed' ? "text-green-600" :
                             report.status === 'failed' ? "text-red-600" :
                             "text-blue-600"
                           )}>
-                            {report.status === 'completed' ? '生成成功' : 
-                             report.status === 'failed' ? '生成失败' : 
+                            {report.status === 'completed' ? '生成成功' :
+                             report.status === 'failed' ? '生成失败' :
                              '正在生成...'}
                           </span>
                           <span className="text-gray-500">{report.progress}%</span>

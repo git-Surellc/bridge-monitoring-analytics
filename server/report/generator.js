@@ -231,7 +231,7 @@ export const generateChartImage = (sensor) => {
         left: 'center',
         textStyle: { fontSize: 16, fontFamily: CHART_FONT_FAMILY_FALLBACK }
       },
-      grid: { top: 60, bottom: 40, left: 90, right: 30 },
+      grid: { top: 60, bottom: 40, left: 50, right: 30 },
       xAxis: {
         type: 'category',
         data: times,
@@ -259,10 +259,7 @@ export const generateChartImage = (sensor) => {
       yAxis: {
         type: 'value',
         scale: true, // auto scale
-        name: `单位 (${unit})`,
-        nameLocation: 'middle',
-        nameGap: 45,
-        nameTextStyle: { fontSize: 12, fontFamily: CHART_FONT_FAMILY_FALLBACK }
+        axisLabel: { fontFamily: CHART_FONT_FAMILY_FALLBACK }
       },
       series: [
         {
@@ -841,27 +838,6 @@ export const generateWordReport = async (bridges, cover, reportSections, deviceS
                     );
                  }
                }
-             }
-
-             // Add AI Analysis Section if available
-             if (bridge.aiAnalysis) {
-               docChildren.push(
-                 new Paragraph({
-                   text: "AI 智能诊断结论",
-                   heading: HeadingLevel.HEADING_3,
-                   spacing: { before: 300, after: 150 },
-                 }),
-                 new Paragraph({
-                   children: [
-                     new TextRun({ 
-                       text: bridge.aiAnalysis,
-                       font: "Calibri" // Optional: specify font
-                     })
-                   ],
-                   alignment: AlignmentType.JUSTIFIED,
-                   spacing: { after: 300 },
-                 })
-               );
              }
           };
 

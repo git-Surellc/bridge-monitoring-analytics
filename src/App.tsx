@@ -10,10 +10,9 @@ import { Dashboard } from './components/Dashboard';
 import { FileManager } from './components/FileManager';
 import { StructureData } from './types';
 import { parseExcelFile } from './utils/excel';
-import { LayoutDashboard, Loader2, FileUp, Globe, Database, LineChart, BookOpen, CheckSquare, BarChart3, FileText, Bot } from 'lucide-react';
+import { LayoutDashboard, Loader2, FileUp, Globe, Database, LineChart, BookOpen, CheckSquare, BarChart3, FileText } from 'lucide-react';
 import { cn } from './utils/cn';
 
-import { AiConfig } from './components/AiConfig';
 import { Login } from './components/Login';
 import { APP_VERSION, BUILD_DATE, BUILD_NUMBER } from './version';
 
@@ -39,7 +38,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [importMode, setImportMode] = useState<'file' | 'api'>('file');
   
-  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'files' | 'ai-config'>('upload');
+  const [currentView, setCurrentView] = useState<'upload' | 'dashboard' | 'files'>('upload');
   const [importLogs, setImportLogs] = useState<any[]>([]);
   const [customOrder, setCustomOrder] = useState(() => localStorage.getItem('api_import_order') || '');
   const [customGroups, setCustomGroups] = useState(() => localStorage.getItem('api_import_groups') || '');
@@ -157,7 +156,7 @@ export default function App() {
               </button>
             )}
 
-            <button 
+            <button
               onClick={() => setCurrentView('files')}
               className={cn(
                 "flex items-center gap-2 text-sm font-medium transition-colors",
@@ -168,16 +167,6 @@ export default function App() {
               文件管理
             </button>
 
-            <button 
-              onClick={() => setCurrentView('ai-config')}
-              className={cn(
-                "flex items-center gap-2 text-sm font-medium transition-colors",
-                currentView === 'ai-config' ? "text-blue-600" : "text-gray-600 hover:text-gray-900"
-              )}
-            >
-              <Bot className="w-4 h-4" />
-              AI配置
-            </button>
             <div className="flex flex-col items-end">
               <div className="text-sm text-gray-500 font-mono">
                 v{APP_VERSION} ({BUILD_DATE} v{BUILD_NUMBER})
@@ -371,8 +360,8 @@ export default function App() {
             {currentView === 'files' && (
               <div className="max-w-6xl mx-auto">
                 <div className="mb-6">
-                  <button 
-                    onClick={() => setCurrentView('upload')} 
+                  <button
+                    onClick={() => setCurrentView('upload')}
                     className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 transition-colors"
                   >
                     ← 返回首页
@@ -380,10 +369,6 @@ export default function App() {
                 </div>
                 <FileManager />
               </div>
-            )}
-
-            {currentView === 'ai-config' && (
-              <AiConfig onBack={() => setCurrentView('dashboard')} />
             )}
           </>
         )}

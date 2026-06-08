@@ -4,6 +4,15 @@
 
 ## 📅 更新日志 (Changelog)
 
+### v1.4.0 (2026-06-08 v29)
+*   **🗑️ 移除 AI 模块**：项目已不再使用 AI 功能，移除 AI 配置页、批量分析、报告中的"AI 智能诊断结论"等所有 AI 相关代码与依赖（`@google/genai`、`express-rate-limit`），降低包体积与运行开销。
+*   **🛠️ 重构**：API 导入（按月/季度/年度）三个入口函数合并为统一的 `runPeriodImport`，减少约 200 行重复代码。
+*   **🐛 修复**：导入接口的小响应误判改用 `Content-Type` 判断，避免真实的 100 字节 Excel 被当成 JSON 错误。
+*   **🐛 修复**：文件下载路由加 `path.basename` 防止路径遍历。
+*   **🐛 修复**：清空数据库改用 `fs.promises.rm(..., { recursive: true, force: true })` 替代逐个 `unlinkSync`。
+*   **⚡ 性能**：`/api/devices/status` 增加 5 并发限制（内联实现，零新依赖），避免多结构时同时打 N 个上游请求。
+*   **🗃️ 数据库**：删除冗余的 `DROP INDEX` 启动 IO；`reports` 旧 schema 迁移仅在表内有数据时备份，并清理历史 `reports_backup_*` 残留。
+
 ### v1.3.17 (2026-04-07 v28)
 *   **🛠️ 修复**：移除“自动猜测直连 :8008 后端”的兜底逻辑（该逻辑在 FRP/反代场景会导致浏览器错误直连 8008，从而出现 `ERR_EMPTY_RESPONSE`）。如需直连后端，请手动设置 `localStorage.backend_origin`。
 

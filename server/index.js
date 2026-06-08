@@ -7,13 +7,26 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { generateWordReport } from './report/generator.js';
 import { startImportTask, getImportStatus, retryImport, getActiveTask, stopImportTask, startQuarterImport, startYearImport } from './importer.js';
-import { startBatchAnalysis, getBatchStatus, stopBatchAnalysis } from './ai/service.js';
-import { globalErrorHandler, aiRateLimiter, uploadTimeout } from './middleware.js';
+import { globalErrorHandler, uploadTimeout } from './middleware.js';
 import { createAuthMiddleware, verifyServiceToken } from './directus-auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 8008;
+
+const mapWithConcurrency = async (items, limit, fn) => {
+  const results = new Array(items.length);
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      results[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+};
 
 app.set('etag', false);
 app.use(cors());
@@ -33,9 +46,6 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '50mb' }));
-
-// Apply Rate Limiting to AI routes
-app.use('/api/ai', aiRateLimiter);
 
 // Apply Directus Authentication to API routes
 app.use('/api', authMiddleware);
@@ -236,7 +246,6 @@ app.post('/api/files/batch-delete', (req, res) => {
 app.get('/api/files', (req, res) => {
   try {
     const files = db.prepare('SELECT * FROM imports ORDER BY created_at DESC').all();
-    console.log('Files count:', files.length);
     res.json({ imports: files });
   } catch (error) {
     console.error('Error fetching files:', error);
@@ -296,159 +305,6 @@ app.get('/api/auth/status', (req, res) => {
       username: userRow ? userRow.value : null
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// AI Proxy API - List Models
-app.post('/api/ai/models', async (req, res) => {
-  let { baseUrl, apiKey } = req.body;
-  
-  if (!baseUrl || !apiKey) {
-    return res.status(400).json({ error: 'Missing required parameters' });
-  }
-
-  baseUrl = baseUrl.trim();
-  apiKey = apiKey.trim();
-
-  // Normalize URL logic for models endpoint
-  let url = baseUrl.replace(/\/$/, '');
-  // Remove /chat/completions suffix if present to find base v1 url
-  url = url.replace(/\/chat\/completions$/, '');
-  
-  if (url.endsWith('/v1')) {
-    url += '/models';
-  } else {
-    url += '/v1/models';
-  }
-
-  console.log(`[AI Proxy] Fetching models from: ${url}`);
-
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      }
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      // Try to parse error json if possible
-      try {
-        const errJson = JSON.parse(errText);
-        return res.status(response.status).json({ error: `AI Provider Error: ${JSON.stringify(errJson)}` });
-      } catch (e) {
-        return res.status(response.status).json({ error: `AI Provider Error: ${errText}` });
-      }
-    }
-
-    const data = await response.json();
-    res.json(data);
-  } catch (error) {
-    console.error('AI Proxy Error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// AI Proxy API - Chat
-app.post('/api/ai/chat', async (req, res) => {
-  let { baseUrl, apiKey, messages, model } = req.body;
-  
-  if (!baseUrl || !apiKey || !messages) {
-    return res.status(400).json({ error: 'Missing required parameters' });
-  }
-
-  baseUrl = baseUrl.trim();
-  apiKey = apiKey.trim();
-  model = (model || '').trim();
-
-  // Normalize URL logic
-  let url = baseUrl.replace(/\/$/, '');
-  if (url.endsWith('/chat/completions')) {
-    // Already has endpoint path, use as is
-  } else if (url.endsWith('/v1')) {
-    url += '/chat/completions';
-  } else {
-    url += '/v1/chat/completions';
-  }
-
-  console.log(`[AI Proxy] Forwarding request to: ${url}`);
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: model || 'qwen-turbo',
-        messages,
-        temperature: 0.7,
-        max_tokens: 500
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      return res.status(response.status).json({ error: `AI Provider Error: ${errText}` });
-    }
-
-    const data = await response.json();
-    res.json(data);
-  } catch (error) {
-    console.error('AI Proxy Error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// AI Batch Analysis API
-app.post('/api/ai/batch/start', (req, res) => {
-  try {
-    const { tasks, config } = req.body;
-    if (!tasks || !config || !Array.isArray(tasks)) {
-      return res.status(400).json({ error: 'Invalid parameters' });
-    }
-    
-    // Add validation for config
-    if (!config.baseUrl || !config.apiKey) {
-      return res.status(400).json({ error: 'Missing AI configuration' });
-    }
-
-    const batchId = startBatchAnalysis(tasks, config);
-    res.json({ batchId });
-  } catch (error) {
-    console.error('Batch start error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/ai/batch/status/:batchId', (req, res) => {
-  try {
-    const status = getBatchStatus(req.params.batchId);
-    if (!status) {
-      return res.status(404).json({ error: 'Batch not found' });
-    }
-    res.json(status);
-  } catch (error) {
-    console.error('Batch status error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Stop AI Batch
-app.post('/api/ai/batch/stop', (req, res) => {
-  try {
-    const { batchId } = req.body;
-    if (!batchId) {
-      return res.status(400).json({ error: 'batchId is required' });
-    }
-    const result = stopBatchAnalysis(batchId);
-    res.json({ success: true, ...result });
-  } catch (error) {
-    console.error('Batch stop error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -584,11 +440,7 @@ app.post('/api/devices/status', async (req, res) => {
       }
     };
 
-    // Parallel execution with Promise.all
-    // For large lists, we might want p-limit, but for now assuming < 50 structures, Promise.all is fine.
-    // If > 50, we should chunk it.
-    
-    const results = await Promise.all(targetStructures.map(fetchStructureStatus));
+    const results = await mapWithConcurrency(targetStructures, 5, fetchStructureStatus);
     res.json(results);
 
   } catch (error) {
@@ -645,7 +497,8 @@ app.delete('/api/files/:id', (req, res) => {
 
 app.get('/api/files/download/:filename', (req, res) => {
   try {
-    const filePath = path.join(EXCEL_DIR, req.params.filename);
+    const safe = path.basename(req.params.filename);
+    const filePath = path.join(EXCEL_DIR, safe);
     if (fs.existsSync(filePath)) {
       return res.download(filePath);
     }
@@ -701,20 +554,12 @@ app.post('/api/admin/fix-filenames', (req, res) => {
 });
 
 // Admin: Clear All Database
-app.delete('/api/admin/clear-database', (req, res) => {
+app.delete('/api/admin/clear-database', async (req, res) => {
   try {
-    // 1. Delete all records from imports table
     db.prepare('DELETE FROM imports').run();
-
-    // 2. Delete all files in excel directory
-    const files = fs.readdirSync(EXCEL_DIR);
-    for (const file of files) {
-      fs.unlinkSync(path.join(EXCEL_DIR, file));
-    }
-    
-    // 3. Reset auto-increment (optional but good for clean slate)
+    await fs.promises.rm(EXCEL_DIR, { recursive: true, force: true });
+    await fs.promises.mkdir(EXCEL_DIR, { recursive: true });
     db.prepare("DELETE FROM sqlite_sequence WHERE name='imports'").run();
-
     res.json({ message: 'Database cleared and all files deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -746,18 +591,14 @@ app.post('/api/reports/generate', async (req, res) => {
     (async () => {
       try {
         db.prepare('UPDATE reports SET status = ?, progress = ? WHERE id = ?').run('processing', 10, reportId);
-        
-        // Generate Report
+
         const buffer = await generateWordReport(bridges, cover, sections, deviceStatuses, (progress) => {
            db.prepare('UPDATE reports SET progress = ? WHERE id = ?').run(progress, reportId);
         }, groups);
-        
-        // Write to disk
-        fs.writeFileSync(filePath, buffer);
-        
-        // Update status
-        db.prepare('UPDATE reports SET status = ?, progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('completed', 100, reportId);
 
+        await fs.promises.writeFile(filePath, buffer);
+
+        db.prepare('UPDATE reports SET status = ?, progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('completed', 100, reportId);
       } catch (err) {
         console.error('Report generation failed:', err);
         db.prepare('UPDATE reports SET status = ?, error_msg = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('failed', err.message, reportId);
@@ -788,16 +629,8 @@ app.get('/api/reports/task/:id', (req, res) => {
 });
 
 app.get('/api/reports/download/:filename', (req, res) => {
-  const filePath = path.join(REPORT_DIR, req.params.filename);
-  if (fs.existsSync(filePath)) {
-    res.download(filePath);
-  } else {
-    res.status(404).json({ error: 'File not found' });
-  }
-});
-
-app.get('/api/files/download/:filename', (req, res) => {
-  const filePath = path.join(EXCEL_DIR, req.params.filename);
+  const safe = path.basename(req.params.filename);
+  const filePath = path.join(REPORT_DIR, safe);
   if (fs.existsSync(filePath)) {
     res.download(filePath);
   } else {

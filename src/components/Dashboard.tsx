@@ -4,13 +4,13 @@ import { SensorChart } from './SensorChart';
 import { CoverEditor } from './CoverEditor';
 import { TemplateEditor } from './TemplateEditor';
 import { SectionNavigator } from './SectionNavigator';
-import { FileDown, FileText, Activity, Trash2, LayoutTemplate, Loader2, ArrowLeft, ArrowDown, ArrowUp, AlertTriangle, RefreshCw, Server, CheckCircle2, XCircle, Brain, Sparkles } from 'lucide-react';
+import { FileDown, FileText, Activity, Trash2, LayoutTemplate, Loader2, ArrowLeft, ArrowDown, ArrowUp, AlertTriangle, RefreshCw, Server, CheckCircle2, XCircle } from 'lucide-react';
 import { cn } from '../utils/cn';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { AnalysisToolbar } from './AnalysisToolbar';
 import { AnalysisResultView } from './AnalysisResultView';
-import { AnalysisConfig, analyzeStructure, analyzeWithAI, StructureAnalysisResult, getSensorType, generateAiPrompt, sortStructuresByUserOrder, groupStructures, StructureGroup, denoiseData } from '../utils/analysis';
+import { AnalysisConfig, analyzeStructure, StructureAnalysisResult, getSensorType, sortStructuresByUserOrder, groupStructures, StructureGroup, denoiseData, isInclinometerSheet, isTemperatureColumn } from '../utils/analysis';
 
 const getStructureKey = (structure: StructureData) => `${structure.id}-${structure.type || '1'}`;
 
@@ -141,24 +141,17 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     const saved = localStorage.getItem('analysis_config');
     return saved ? JSON.parse(saved) : {
       enableGlobal: true,
-      enableAi: false,
       enableInclination: true,
       enableDisplacement: true,
       enableAcceleration: true,
       enableTemperature: true,
       enableCrack: true,
       enableCorrelation: true,
-      enableDenoise: false
+      enableDenoise: false,
+      hideInclinometerTemperature: true
     };
   });
   const [analysisResults, setAnalysisResults] = useState<Record<string, StructureAnalysisResult>>({});
-  const [aiResults, setAiResults] = useState<Record<string, string>>(() => {
-    const saved = localStorage.getItem('ai_results_cache');
-    return saved ? JSON.parse(saved) : {};
-  });
-  const [isAiLoading, setIsAiLoading] = useState<Record<string, boolean>>({});
-  const [hasAiConfig, setHasAiConfig] = useState(false);
-  const [aiBatchId, setAiBatchId] = useState<string | null>(null);
   const [denoiseStructures, setDenoiseStructures] = useState<Record<string, boolean>>({});
   const [denoiseSensors, setDenoiseSensors] = useState<Record<string, boolean>>({});
   const [denoiseRules, setDenoiseRules] = useState<Record<string, { maxDelta?: number | null; min?: number | null; max?: number | null }>>(() => {
@@ -264,13 +257,22 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       .map((structure) => ({
         ...structure,
         sensors: (structure.sensors || []).filter((sensor) => {
+          if (analysisConfig.hideInclinometerTemperature && isInclinometerSheet(sensor) && isTemperatureColumn(sensor)) {
+            return false;
+          }
+          return true;
+        }),
+      }))
+      .map((structure) => ({
+        ...structure,
+        sensors: (structure.sensors || []).filter((sensor) => {
           const sheet = String(sensor.sheetType || '').trim();
           if (!sheet) return true;
           return indicatorSelection[sheet] !== false;
         }),
       }))
       .filter((s) => (s.sensors || []).length > 0);
-  }, [displayStructures, indicatorSelection]);
+  }, [displayStructures, indicatorSelection, analysisConfig.hideInclinometerTemperature]);
 
   const displayStructureGroups = React.useMemo(() => {
     if (!customGroups || !customGroups.trim()) return null;
@@ -319,12 +321,6 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     localStorage.setItem('indicator_selection_v1', JSON.stringify(indicatorSelection));
   }, [indicatorSelection]);
 
-  // Check for AI Config
-  useEffect(() => {
-    const config = localStorage.getItem('ai_config');
-    setHasAiConfig(!!config);
-  }, []);
-
   // Perform Structure Analysis
   useEffect(() => {
     if (!analysisConfig.enableGlobal) {
@@ -347,204 +343,6 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     });
     setAnalysisResults(newResults);
   }, [selectedStructures, analysisConfig, denoiseStructures, denoiseSensors, denoiseRules, deviceMetaRules]);
-
-  // Perform AI Analysis (Manual Trigger Only)
-  /* 
-  // Auto-trigger disabled as per user request for manual control
-  useEffect(() => {
-    if (!analysisConfig.enableGlobal || !analysisConfig.enableAi || !hasAiConfig) return;
-
-    if (expandedAnalysisStructureId) {
-      const structure = structures.find(s => s.id === expandedAnalysisStructureId);
-      if (structure && !aiResults[structure.id] && !isAiLoading[structure.id]) {
-        const savedConfig = localStorage.getItem('ai_config');
-        if (!savedConfig) return;
-        
-        const aiConfig = JSON.parse(savedConfig);
-        setIsAiLoading(prev => ({ ...prev, [structure.id]: true }));
-        
-        analyzeWithAI(structure, aiConfig)
-          .then(res => {
-            if (res) {
-              setAiResults(prev => ({ ...prev, [structure.id]: res }));
-            }
-          })
-          .catch(err => console.error('AI Analysis failed:', err))
-          .finally(() => {
-            setIsAiLoading(prev => ({ ...prev, [structure.id]: false }));
-          });
-      }
-    }
-  }, [expandedAnalysisStructureId, analysisConfig.enableGlobal, analysisConfig.enableAi, hasAiConfig, structures]);
-  */
-
-  // Restore AI Batch State on Mount
-  useEffect(() => {
-    const savedBatchId = localStorage.getItem('ai_batch_id');
-    if (savedBatchId) {
-      setAiBatchId(savedBatchId);
-    }
-  }, []);
-
-  // Poll AI Batch Status
-  useEffect(() => {
-    if (!aiBatchId) return;
-
-    let isMounted = true;
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/ai/batch/status/${aiBatchId}`);
-        if (!res.ok) {
-          if (res.status === 404) {
-            // Batch not found (maybe server restarted), clear it
-            localStorage.removeItem('ai_batch_id');
-            if (isMounted) {
-              setAiBatchId(null);
-              setIsAiLoading({});
-            }
-          }
-          return;
-        }
-        const status = await res.json();
-        
-        if (!isMounted) return;
-
-        // Update aiResults
-        const newResults: Record<string, string> = {};
-        const newLoading: Record<string, boolean> = {};
-        
-        status.tasks.forEach((task: any) => {
-          if (task.status === 'completed' && task.result) {
-            newResults[task.id] = task.result;
-            newLoading[task.id] = false;
-          } else if (task.status === 'failed') {
-            newLoading[task.id] = false;
-            // Optionally show error in UI, but for now just stop loading
-          } else {
-            newLoading[task.id] = true;
-          }
-        });
-        
-        setAiResults(prev => {
-          const next = { ...prev, ...newResults };
-          localStorage.setItem('ai_results_cache', JSON.stringify(next));
-          return next;
-        });
-        
-        // Only update loading state if changed (to avoid too many re-renders)
-        setIsAiLoading(prev => ({ ...prev, ...newLoading }));
-
-        if (status.isComplete) {
-          localStorage.removeItem('ai_batch_id');
-          setAiBatchId(null);
-          setIsAiLoading({}); // Clear all loading
-        }
-      } catch (e) {
-        console.error('Poll error', e);
-      }
-    };
-
-    const interval = setInterval(poll, 2000);
-    poll(); // immediate run
-
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [aiBatchId]);
-
-  const handleRunAiAnalysis = async (structureKey?: string) => {
-    if (!analysisConfig.enableGlobal || !analysisConfig.enableAi || !hasAiConfig) return;
-    
-    const savedConfig = localStorage.getItem('ai_config');
-    if (!savedConfig) {
-      alert('请先配置 AI 接口信息');
-      return;
-    }
-    const aiConfig = JSON.parse(savedConfig);
-
-    const targetStructures = structureKey 
-      ? selectedStructures.filter(s => getStructureKey(s) === structureKey)
-      : selectedStructures;
-
-    if (targetStructures.length === 0) return;
-
-    // Check if already running (simple check)
-    if (aiBatchId) {
-      const confirm = window.confirm('已有正在进行的 AI 分析任务，是否重新开始？');
-      if (!confirm) return;
-    }
-
-    // Set loading state
-    const loadingState: Record<string, boolean> = {};
-    targetStructures.forEach(s => loadingState[getStructureKey(s)] = true);
-    setIsAiLoading(prev => ({ ...prev, ...loadingState }));
-
-    try {
-      const tasks = targetStructures.reduce((acc, s) => {
-        const key = getStructureKey(s);
-        const analysis = analysisResults[key] || analyzeStructure(s, analysisConfig);
-        if (!analysis) return acc;
-        acc.push({
-          id: key,
-          name: s.name,
-          prompt: generateAiPrompt(s, analysis),
-        });
-        return acc;
-      }, [] as Array<{ id: string; name: string; prompt: string }>);
-
-      if (tasks.length === 0) {
-        alert('没有可用于 AI 分析的结构数据');
-        setIsAiLoading(prev => {
-          const next = { ...prev };
-          targetStructures.forEach(s => delete next[getStructureKey(s)]);
-          return next;
-        });
-        return;
-      }
-
-      const res = await fetch('/api/ai/batch/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tasks, config: aiConfig })
-      });
-      
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to start batch');
-      }
-      
-      const { batchId } = await res.json();
-      setAiBatchId(batchId);
-      localStorage.setItem('ai_batch_id', batchId);
-
-    } catch (err) {
-      console.error('Batch AI Analysis failed:', err);
-      alert(`启动 AI 分析失败: ${err instanceof Error ? err.message : '未知错误'}`);
-      setIsAiLoading(prev => {
-        const next = { ...prev };
-        targetStructures.forEach(s => delete next[getStructureKey(s)]);
-        return next;
-      });
-    }
-  };
-
-  const handleStopAiAnalysis = async () => {
-    try {
-      const id = aiBatchId || localStorage.getItem('ai_batch_id');
-      if (id) {
-        await fetch('/api/ai/batch/stop', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ batchId: id })
-        }).catch(() => {});
-      }
-    } finally {
-      localStorage.removeItem('ai_batch_id');
-      setAiBatchId(null);
-      setIsAiLoading({});
-    }
-  };
 
   // Compute Available Types for Toolbar
   const availableTypes = React.useMemo(() => {
@@ -801,15 +599,14 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
         setExportProgress('正在提交生成任务...');
 
         // 1. Submit task to backend
-        // Enrich structures with AI analysis results and algorithm results
+        // Enrich structures with algorithm analysis results
         const maxPointsPerSensor = 1200;
         const bridgesWithAi = selectedStructures.map(s => {
           const key = getStructureKey(s);
           const displayStructure = getDisplayStructure(s);
           return {
             ...compactStructureForExport(displayStructure, maxPointsPerSensor),
-            aiAnalysis: aiResults[key] || null,
-            analysis: analysisResults[key] || null
+            analysis: analysisConfig.enableGlobal ? (analysisResults[key] || null) : null
           };
         });
 
@@ -823,8 +620,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
               const displayStructure = getDisplayStructure(s);
               return {
                 ...compactStructureForExport(displayStructure, maxPointsPerSensor),
-                aiAnalysis: aiResults[key] || null,
-                analysis: analysisResults[key] || null
+                analysis: analysisConfig.enableGlobal ? (analysisResults[key] || null) : null
               };
             })
           }));
@@ -1114,14 +910,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       </div>
 
       <div className="sticky top-0 z-[100] bg-white/95 backdrop-blur shadow-sm border-b border-gray-100 transition-all duration-300 -mx-6 px-6 py-2">
-        <AnalysisToolbar 
+        <AnalysisToolbar
           config={analysisConfig}
           onChange={handleAnalysisConfigChange}
           availableTypes={availableTypes}
-          hasAiConfig={hasAiConfig}
-          onAiAnalyze={() => handleRunAiAnalysis()}
-          isAiAnalyzing={Object.values(isAiLoading).some(v => v)}
-          onAiStop={() => handleStopAiAnalysis()}
           onOpenDenoiseConfig={() => setShowDenoiseConfig(true)}
           onOpenDeviceMetaConfig={() => setShowDeviceMetaConfig(true)}
           onOpenIndicatorSelect={() => setShowIndicatorSelect(true)}
@@ -1858,36 +1650,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                             />
                                             <span className="text-sm text-gray-700 group-hover:text-green-700">该结构去噪</span>
                                           </label>
-                                          {/* Per-structure AI Analysis Button */}
-                                          {hasAiConfig && analysisConfig.enableGlobal && analysisConfig.enableAi && (
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleRunAiAnalysis(structureKey);
-                                              }}
-                                              disabled={isAiLoading[structureKey]}
-                                              className={cn(
-                                                "px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5",
-                                                isAiLoading[structureKey]
-                                                  ? "bg-purple-50 text-purple-400 cursor-wait"
-                                                  : "bg-purple-50 text-purple-600 hover:bg-purple-100 hover:shadow-sm"
-                                              )}
-                                              title="点击运行该结构的 AI 分析"
-                                            >
-                                              {isAiLoading[structureKey] ? (
-                                                <>
-                                                  <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                                  <span>分析中...</span>
-                                                </>
-                                              ) : (
-                                                <>
-                                                  <Brain className="w-4 h-4" />
-                                                  <span>AI 分析</span>
-                                                </>
-                                              )}
-                                            </button>
-                                          )}
-                                          
+
                                           <div className="flex items-center gap-1 text-gray-400">
                                             <span className="text-sm">{isExpanded ? '收起' : '展开'}</span>
                                             {isExpanded ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
@@ -1934,16 +1697,14 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
                                         {/* Analysis Results */}
                                         {isExpanded && analysisConfig.enableGlobal && (
-                                          <AnalysisResultView 
+                                          <AnalysisResultView
                                             qualityResults={analysisResults[structureKey]?.quality}
                                             trendResults={analysisResults[structureKey]?.trend}
                                             deformationResults={analysisResults[structureKey]?.deformation}
                                             accelerationResults={analysisResults[structureKey]?.acceleration}
                                             crackResults={analysisResults[structureKey]?.crack}
                                             correlationResult={analysisResults[structureKey]?.correlation}
-                                            aiResult={aiResults[structureKey]}
                                             config={analysisConfig}
-                                            isLoadingAi={isAiLoading[structureKey]}
                                           />
                                         )}
                                       </div>
@@ -2007,36 +1768,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                                     />
                                     <span className="text-sm text-gray-700 group-hover:text-green-700">该结构去噪</span>
                                   </label>
-                                  {/* Per-structure AI Analysis Button */}
-                                  {hasAiConfig && analysisConfig.enableGlobal && analysisConfig.enableAi && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleRunAiAnalysis(structureKey);
-                                      }}
-                                      disabled={isAiLoading[structureKey]}
-                                      className={cn(
-                                        "px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5",
-                                        isAiLoading[structureKey]
-                                          ? "bg-purple-50 text-purple-400 cursor-wait"
-                                          : "bg-purple-50 text-purple-600 hover:bg-purple-100 hover:shadow-sm"
-                                      )}
-                                      title="点击运行该结构的 AI 分析"
-                                    >
-                                      {isAiLoading[structureKey] ? (
-                                        <>
-                                          <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                          <span>分析中...</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Brain className="w-4 h-4" />
-                                          <span>AI 分析</span>
-                                        </>
-                                      )}
-                                    </button>
-                                  )}
-                                  
+
                                   <div className="flex items-center gap-1 text-gray-400">
                                     <span className="text-sm">{isExpanded ? '收起' : '展开'}</span>
                                     {isExpanded ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
@@ -2083,16 +1815,14 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
                                 {/* Analysis Results */}
                                 {isExpanded && analysisConfig.enableGlobal && (
-                                  <AnalysisResultView 
+                                  <AnalysisResultView
                                     qualityResults={analysisResults[structureKey]?.quality}
                                     trendResults={analysisResults[structureKey]?.trend}
                                     deformationResults={analysisResults[structureKey]?.deformation}
                                     accelerationResults={analysisResults[structureKey]?.acceleration}
                                     crackResults={analysisResults[structureKey]?.crack}
                                     correlationResult={analysisResults[structureKey]?.correlation}
-                                    aiResult={aiResults[structureKey]}
                                     config={analysisConfig}
-                                    isLoadingAi={isAiLoading[structureKey]}
                                   />
                                 )}
                               </div>
@@ -2115,49 +1845,6 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                       }}>
                         {section.content || '在此处输入评估结论及建议...'}
                       </div>
-                      
-                      {/* AI Summary Button for Conclusion */}
-                      {hasAiConfig && analysisConfig.enableGlobal && analysisConfig.enableAi && (
-                        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
-                           <button
-                            onClick={async () => {
-                              const config = localStorage.getItem('ai_config');
-                              if (!config) return;
-                              const { baseUrl, apiKey, model } = JSON.parse(config);
-                              
-                              const btn = document.getElementById(`ai-btn-${section.id}`);
-                              if (btn) btn.innerText = 'AI 生成中...';
-                              
-                              try {
-                                const { generateOverallSummaryPrompt, callAiApi } = await import('../utils/analysis');
-                                const prompt = generateOverallSummaryPrompt(structures);
-                                const result = await callAiApi(prompt, { baseUrl, apiKey, model });
-                                
-                                const newSections = [...template.sections];
-                                const idx = newSections.findIndex(s => s.id === section.id);
-                                if (idx !== -1) {
-                                  const currentContent = newSections[idx].content || '';
-                                  newSections[idx] = { 
-                                    ...newSections[idx], 
-                                    content: currentContent ? `${currentContent}\n\n【AI 智能总结】\n${result}` : `【AI 智能总结】\n${result}` 
-                                  };
-                                  setTemplate({ ...template, sections: newSections });
-                                }
-                              } catch (err) {
-                                console.error(err);
-                                alert('AI 生成失败: ' + (err instanceof Error ? err.message : '未知错误'));
-                              } finally {
-                                if (btn) btn.innerText = 'AI 智能生成总结';
-                              }
-                            }}
-                            id={`ai-btn-${section.id}`}
-                            className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 text-purple-700 hover:bg-purple-100 rounded-lg text-sm font-medium transition-colors"
-                          >
-                            <Sparkles className="w-4 h-4" />
-                            AI 智能生成总结
-                          </button>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>

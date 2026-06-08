@@ -24,7 +24,7 @@ type CachedChartRecord = {
   createdAt: number;
 };
 
-const CHART_CACHE_DB = 'bma_chart_cache_v1';
+const CHART_CACHE_DB = 'bma_chart_cache_v2';
 const CHART_CACHE_STORE = 'charts';
 const MAX_CACHED_CHARTS = 200;
 
@@ -280,10 +280,9 @@ export function SensorChart({ sensor, color = '#2563eb', cacheKey }: SensorChart
                 tick={{ fontSize: 10, fill: '#6b7280' }}
                 tickMargin={10}
               />
-              <YAxis 
+              <YAxis
                 tick={{ fontSize: 10, fill: '#6b7280' }}
                 domain={['auto', 'auto']}
-                label={{ value: `单位 (${unit})`, angle: -90, position: 'left', offset: 10, style: { fill: '#6b7280', fontSize: 12 } }}
               />
               <Tooltip 
                 contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
