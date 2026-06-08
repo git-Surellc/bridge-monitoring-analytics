@@ -30,6 +30,9 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
   const [hasToken, setHasToken] = useState(false);
   const [showAuthInput, setShowAuthInput] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
+  const [showManualToken, setShowManualToken] = useState(false);
+  const [manualToken, setManualToken] = useState('');
+  const [manualTokenLoading, setManualTokenLoading] = useState(false);
 
   // Custom Order & Grouping State
   const [userOrder, setUserOrder] = useState(() => {
@@ -334,6 +337,33 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
     }
   };
 
+  const handleSetManualToken = async () => {
+    if (!manualToken || !manualToken.trim()) {
+      alert('请粘贴 token');
+      return;
+    }
+    setManualTokenLoading(true);
+    try {
+      const res = await smartFetch('/api/auth/set-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: manualToken.trim() })
+      }, 10000);
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
+      }
+      setHasToken(true);
+      setShowManualToken(false);
+      setManualToken('');
+      alert('Token 已保存,可立即发起导入');
+    } catch (err) {
+      alert('保存失败: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setManualTokenLoading(false);
+    }
+  };
+
   useEffect(() => {
     // Initial check
     checkStatus();
@@ -625,6 +655,37 @@ export function ApiImporter({ onImport, onLogUpdate, onConfigUpdate, className }
                   {hasToken ? "更新并重新获取Token" : "获取授权Token"}
                 </button>
              </div>
+             <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => setShowManualToken((v) => !v)}
+                  className="text-xs text-gray-500 hover:text-blue-600 hover:underline"
+                >
+                  {showManualToken ? '收起手动粘贴' : '登录不上?手动粘贴 token'}
+                </button>
+             </div>
+             {showManualToken && (
+                <div className="space-y-2 pt-1 border-t border-gray-200">
+                   <div className="text-xs text-gray-500 leading-relaxed">
+                     从浏览器登录平台后,在 DevTools Network 找任意一个请求的 <code className="px-1 bg-gray-100 rounded">Authorization</code> 头,或者直接用 Apipost 调登录接口拿响应里的 <code className="px-1 bg-gray-100 rounded">token</code> 字段,粘到下面。
+                   </div>
+                   <textarea
+                     value={manualToken}
+                     onChange={(e) => setManualToken(e.target.value)}
+                     placeholder="eyJhbGciOiJIUzUxMiJ9..."
+                     rows={3}
+                     className="w-full px-3 py-2 text-xs font-mono border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 break-all"
+                   />
+                   <button
+                     onClick={handleSetManualToken}
+                     disabled={manualTokenLoading || !manualToken.trim()}
+                     className="px-3 py-2 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1 w-full justify-center"
+                   >
+                     {manualTokenLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Key className="w-3 h-3" />}
+                     保存 token
+                   </button>
+                </div>
+             )}
           </div>
         )}
       </div>

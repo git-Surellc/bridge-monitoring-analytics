@@ -261,7 +261,7 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     // 1. Encrypt Password
     const suffix = Math.floor(100000 + Math.random() * 900000);
-    const encryptUrl = `http://cdsd.seefar.com.cn/prod-api/getPw?password=${password}${suffix}`;
+    const encryptUrl = `https://cdsd.seefar.com.cn/prod-api/getPw?password=${password}${suffix}`;
     
     const encryptRes = await fetch(encryptUrl);
     if (!encryptRes.ok) throw new Error(`Encryption failed: ${encryptRes.status}`);
@@ -271,7 +271,7 @@ app.post('/api/auth/login', async (req, res) => {
     const encryptedPassword = encryptData.msg;
 
     // 2. Login
-    const loginUrl = 'http://cdsd.seefar.com.cn/prod-api/login';
+    const loginUrl = 'https://cdsd.seefar.com.cn/prod-api/login';
     const loginRes = await fetch(loginUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -293,6 +293,21 @@ app.post('/api/auth/login', async (req, res) => {
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Manually paste a token (skip platform /login when it's broken/misbehaving)
+app.post('/api/auth/set-token', (req, res) => {
+  const { token } = req.body || {};
+  if (!token || typeof token !== 'string' || !token.trim()) {
+    return res.status(400).json({ error: 'Token is required' });
+  }
+  try {
+    const stmt = db.prepare('INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)');
+    stmt.run('api_token', token.trim());
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -353,7 +368,7 @@ app.post('/api/devices/status', async (req, res) => {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
-        const url = new URL('http://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/sensorList');
+        const url = new URL('https://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/sensorList');
         url.searchParams.append('pageNum', '1');
         url.searchParams.append('pageSize', '100'); 
         url.searchParams.append('structureName', struct.name);

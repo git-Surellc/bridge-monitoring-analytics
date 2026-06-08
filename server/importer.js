@@ -96,7 +96,7 @@ const downloadExcelBuffer = async (url, headers) => {
 };
 
 const fetchMonthExcel = async (month, type, id, token) => {
-  const url = `http://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/exportMonthData?month=${month}&structureType=${type}&structureId=${id}`;
+  const url = `https://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/exportMonthData?month=${month}&structureType=${type}&structureId=${id}`;
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Authorization': token || ''
@@ -410,7 +410,7 @@ export const retryImport = async (month, structureId) => {
   db.prepare('UPDATE imports SET status = ? WHERE id = ?').run('pending', item.id);
 
   try {
-    const url = `http://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/exportMonthData?month=${month}&structureType=${item.structure_type}&structureId=${item.structure_id}`;
+    const url = `https://cdsd.seefar.com.cn/prod-api/monitor-monitoring-point/exportMonthData?month=${month}&structureType=${item.structure_type}&structureId=${item.structure_id}`;
     const response = await fetch(url);
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
