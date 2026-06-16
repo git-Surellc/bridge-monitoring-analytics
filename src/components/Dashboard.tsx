@@ -159,10 +159,72 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
     return saved ? JSON.parse(saved) : {};
   });
   const [showDenoiseConfig, setShowDenoiseConfig] = useState(false);
-  const [deviceMetaRules, setDeviceMetaRules] = useState<Record<string, { sensorType?: string | null; unit?: string | null; alarmThreshold?: number | null; maxDelta?: number | null; min?: number | null; max?: number | null }>>(() => {
-    const saved = localStorage.getItem('device_meta_rules_v1');
-    return saved ? JSON.parse(saved) : {};
+  type DeviceMetaRule = {
+    match?: string | null;
+    sensorType?: string | null;
+    unit?: string | null;
+    alarmThreshold?: number | null;
+    maxDelta?: number | null;
+    min?: number | null;
+    max?: number | null;
+  };
+
+  const normalizeDeviceMetaRules = (
+    input: unknown
+  ): Record<string, DeviceMetaRule[]> => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+    const out: Record<string, DeviceMetaRule[]> = {};
+    for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+      if (Array.isArray(value)) {
+        out[key] = value
+          .filter((v): v is DeviceMetaRule => !!v && typeof v === 'object')
+          .map((v) => ({ ...v }));
+      } else if (value && typeof value === 'object') {
+        out[key] = [{ ...(value as DeviceMetaRule) }];
+      } else {
+        out[key] = [];
+      }
+    }
+    return out;
+  };
+
+  const pickDeviceRule = (
+    rules: DeviceMetaRule[] | undefined,
+    sensorName: string
+  ): DeviceMetaRule | null => {
+    if (!Array.isArray(rules) || rules.length === 0) return null;
+    const name = String(sensorName || '').toLowerCase();
+    const matched = rules.find((r) => {
+      const k = String(r?.match || '').trim().toLowerCase();
+      return k && name.includes(k);
+    });
+    if (matched) return matched;
+    const fallback = rules.find((r) => !String(r?.match || '').trim());
+    return fallback || rules[0];
+  };
+
+  const [deviceMetaRules, setDeviceMetaRules] = useState<Record<string, DeviceMetaRule[]>>(() => {
+    const saved = localStorage.getItem('device_meta_rules_v2');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return normalizeDeviceMetaRules(parsed);
+      } catch {
+        return {};
+      }
+    }
+    const legacy = localStorage.getItem('device_meta_rules_v1');
+    if (legacy) {
+      try {
+        const parsed = JSON.parse(legacy);
+        return normalizeDeviceMetaRules(parsed);
+      } catch {
+        return {};
+      }
+    }
+    return {};
   });
+
   const [showDeviceMetaConfig, setShowDeviceMetaConfig] = useState(false);
   const [indicatorSelection, setIndicatorSelection] = useState<Record<string, boolean>>(() => {
     const saved = localStorage.getItem('indicator_selection_v1');
@@ -206,14 +268,17 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
 
   const DEVICE_PRESETS = React.useMemo(() => {
     return {
-      '一体化倾角振动监测仪': { sensorType: 'inclination', unit: '°' },
-      '光电挠度仪': { sensorType: 'displacement', unit: 'mm' },
-      '拉线位移传感器': { sensorType: 'displacement', unit: 'mm' },
-      '盒式固定测斜仪': { sensorType: 'inclination', unit: '°' },
-      '一体化振动监测仪': { sensorType: 'acceleration', unit: 'mg' },
-      '裂缝计': { sensorType: 'crack', unit: 'mm' },
-      '激光测距仪': { sensorType: 'displacement', unit: 'mm' },
-    } as Record<string, { sensorType: string; unit: string }>;
+      '一体化倾角振动监测仪': [
+        { match: '倾角', sensorType: 'inclination', unit: '°' },
+        { match: '振动', sensorType: 'acceleration', unit: 'mg' },
+      ],
+      '光电挠度仪': [{ sensorType: 'displacement', unit: 'mm' }],
+      '拉线位移传感器': [{ sensorType: 'displacement', unit: 'mm' }],
+      '盒式固定测斜仪': [{ sensorType: 'inclination', unit: '°' }],
+      '一体化振动监测仪': [{ sensorType: 'acceleration', unit: 'mg' }],
+      '裂缝计': [{ sensorType: 'crack', unit: 'mm' }],
+      '激光测距仪': [{ sensorType: 'displacement', unit: 'mm' }],
+    } as Record<string, Array<{ match?: string; sensorType: string; unit: string }>>;
   }, []);
 
   const allDeviceTypeList = React.useMemo(() => {
@@ -238,7 +303,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
       ...structure,
       sensors: (structure.sensors || []).map((sensor) => {
         const key = String(sensor.deviceType || sensor.sheetType || '').trim();
-        const meta = key ? deviceMetaRules[key] : undefined;
+        const meta = key ? pickDeviceRule(deviceMetaRules[key], sensor.name) : null;
         const unit = meta?.unit && String(meta.unit).trim() ? String(meta.unit).trim() : sensor.unit;
         const sensorType = meta?.sensorType && String(meta.sensorType).trim() ? String(meta.sensorType).trim() : sensor.sensorType;
         const alarmThreshold = meta?.alarmThreshold;
@@ -314,7 +379,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
   }, [denoiseRules]);
 
   useEffect(() => {
-    localStorage.setItem('device_meta_rules_v1', JSON.stringify(deviceMetaRules));
+    localStorage.setItem('device_meta_rules_v2', JSON.stringify(deviceMetaRules));
   }, [deviceMetaRules]);
 
   useEffect(() => {
@@ -385,10 +450,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
   const getDenoiseRule = (sensor: any) => {
     const type = getSensorType(sensor) || 'other';
     const deviceKey = String(sensor.deviceType || sensor.sheetType || '').trim();
-    const deviceRule = deviceKey ? deviceMetaRules[deviceKey] : undefined;
-    const maxDeltaSource = deviceRule?.maxDelta !== undefined ? deviceRule : (denoiseRules[type] || {});
-    const minSource = deviceRule?.min !== undefined ? deviceRule : (denoiseRules[type] || {});
-    const maxSource = deviceRule?.max !== undefined ? deviceRule : (denoiseRules[type] || {});
+    const deviceRule = deviceKey ? pickDeviceRule(deviceMetaRules[deviceKey], sensor.name) : null;
+    const maxDeltaSource = deviceRule?.maxDelta !== undefined && deviceRule?.maxDelta !== null ? deviceRule : (denoiseRules[type] || {});
+    const minSource = deviceRule?.min !== undefined && deviceRule?.min !== null ? deviceRule : (denoiseRules[type] || {});
+    const maxSource = deviceRule?.max !== undefined && deviceRule?.max !== null ? deviceRule : (denoiseRules[type] || {});
 
     const maxDelta = typeof maxDeltaSource.maxDelta === 'number' && Number.isFinite(maxDeltaSource.maxDelta) && maxDeltaSource.maxDelta > 0 ? maxDeltaSource.maxDelta : undefined;
     const min = typeof minSource.min === 'number' && Number.isFinite(minSource.min) ? minSource.min : undefined;
@@ -1160,135 +1225,191 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
             <div className="px-6 py-5 max-h-[70vh] overflow-auto">
               <div className="grid grid-cols-1 gap-4">
                 {allDeviceTypeList.map((deviceType) => {
-                  const rule = deviceMetaRules[deviceType] || {};
-                  const unitValue = rule.unit ?? '';
-                  const sensorTypeValue = rule.sensorType ?? '';
-                  const alarmThresholdValue = rule.alarmThreshold ?? '';
-                  const maxDeltaValue = rule.maxDelta ?? '';
-                  const minValue = rule.min ?? '';
-                  const maxValue = rule.max ?? '';
+                  const rules: DeviceMetaRule[] = Array.isArray(deviceMetaRules[deviceType]) ? deviceMetaRules[deviceType] : [];
+                  const defaultRule: DeviceMetaRule = rules.find((r) => !String(r?.match || '').trim()) || {};
+                  const matchedRules: DeviceMetaRule[] = rules.filter((r) => String(r?.match || '').trim());
+                  const orderedRules: DeviceMetaRule[] = [defaultRule, ...matchedRules];
+
+                  const updateRuleAt = (idx: number, patch: Partial<DeviceMetaRule>) => {
+                    setDeviceMetaRules(prev => {
+                      const cur = Array.isArray(prev[deviceType]) ? prev[deviceType] : [];
+                      const next = [...cur];
+                      next[idx] = { ...(next[idx] || {}), ...patch };
+                      return { ...prev, [deviceType]: next };
+                    });
+                  };
+
+                  const deleteRuleAt = (idx: number) => {
+                    setDeviceMetaRules(prev => {
+                      const cur = Array.isArray(prev[deviceType]) ? prev[deviceType] : [];
+                      const next = cur.filter((_, i) => i !== idx);
+                      return { ...prev, [deviceType]: next };
+                    });
+                  };
+
+                  const addMatchedRule = () => {
+                    setDeviceMetaRules(prev => {
+                      const cur = Array.isArray(prev[deviceType]) ? prev[deviceType] : [];
+                      const next = [...cur, { match: '', sensorType: null, unit: null }];
+                      return { ...prev, [deviceType]: next };
+                    });
+                  };
 
                   return (
                     <div key={deviceType} className="rounded-xl border border-gray-200 p-4">
                       <div className="flex items-start justify-between gap-3 mb-3">
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-gray-900 break-words">{deviceType}</div>
-                          <div className="text-xs text-gray-500">来源：设备类型 / Excel sheet</div>
+                          <div className="text-xs text-gray-500">
+                            来源：设备类型 / Excel sheet{matchedRules.length > 0 ? ` · 共 ${orderedRules.length} 条规则（1 默认 + ${matchedRules.length} 列匹配）` : ''}
+                          </div>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-                        <div className="lg:col-span-3">
-                          <div className="text-xs text-gray-600 mb-1">传感器类型</div>
-                          <select
-                            value={sensorTypeValue}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              setDeviceMetaRules(prev => ({
-                                ...prev,
-                                [deviceType]: { ...(prev[deviceType] || {}), sensorType: raw ? raw : null }
-                              }));
-                            }}
-                            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:border-blue-400 focus:ring-blue-200"
-                          >
-                            <option value="">不指定</option>
-                            <option value="inclination">倾角</option>
-                            <option value="displacement">位移/挠度</option>
-                            <option value="acceleration">振动/加速度</option>
-                            <option value="temperature">温度</option>
-                            <option value="crack">裂缝</option>
-                            <option value="other">其他</option>
-                          </select>
-                        </div>
+                      <div className="space-y-3">
+                        {orderedRules.map((r, idx) => {
+                          const isDefault = idx === 0;
+                          const matchValue = r?.match ?? '';
+                          const unitValue = r?.unit ?? '';
+                          const sensorTypeValue = r?.sensorType ?? '';
+                          const alarmThresholdValue = r?.alarmThreshold ?? '';
+                          const maxDeltaValue = r?.maxDelta ?? '';
+                          const minValue = r?.min ?? '';
+                          const maxValue = r?.max ?? '';
+                          return (
+                            <div
+                              key={`${deviceType}-${idx}`}
+                              className={`rounded-lg border p-3 ${isDefault ? 'border-gray-200 bg-gray-50' : 'border-blue-200 bg-white'}`}
+                            >
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className={`text-xs font-medium px-2 py-0.5 rounded ${isDefault ? 'bg-gray-200 text-gray-700' : 'bg-blue-100 text-blue-700'}`}>
+                                    {isDefault ? '默认规则' : '列匹配规则'}
+                                  </span>
+                                  {!isDefault && (
+                                    <input
+                                      value={matchValue}
+                                      onChange={(e) => updateRuleAt(idx, { match: e.target.value || null })}
+                                      className="w-32 px-2 py-1 text-xs rounded border border-gray-200 bg-white focus:border-blue-400 focus:ring-blue-200"
+                                      placeholder="列名含…"
+                                    />
+                                  )}
+                                </div>
+                                {!isDefault && (
+                                  <button
+                                    onClick={() => deleteRuleAt(idx)}
+                                    className="text-xs text-red-600 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                                  >
+                                    删除
+                                  </button>
+                                )}
+                              </div>
 
-                        <div className="lg:col-span-2">
-                          <div className="text-xs text-gray-600 mb-1">单位</div>
-                          <input
-                            value={unitValue}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              setDeviceMetaRules(prev => ({
-                                ...prev,
-                                [deviceType]: { ...(prev[deviceType] || {}), unit: raw.trim() ? raw : null }
-                              }));
-                            }}
-                            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
-                            placeholder="例如：mm"
-                          />
-                        </div>
+                              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                                <div className="lg:col-span-3">
+                                  <div className="text-xs text-gray-600 mb-1">传感器类型</div>
+                                  <select
+                                    value={sensorTypeValue}
+                                    onChange={(e) => {
+                                      const raw = e.target.value;
+                                      updateRuleAt(idx, { sensorType: raw ? raw : null });
+                                    }}
+                                    className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:border-blue-400 focus:ring-blue-200"
+                                  >
+                                    <option value="">不指定</option>
+                                    <option value="inclination">倾角</option>
+                                    <option value="displacement">位移/挠度</option>
+                                    <option value="acceleration">振动/加速度</option>
+                                    <option value="temperature">温度</option>
+                                    <option value="crack">裂缝</option>
+                                    <option value="other">其他</option>
+                                  </select>
+                                </div>
 
-                        <div className="lg:col-span-2">
-                          <div className="text-xs text-gray-600 mb-1">报警阈值</div>
-                          <input
-                            type="number"
-                            step={0.1}
-                            value={alarmThresholdValue}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              setDeviceMetaRules(prev => ({
-                                ...prev,
-                                [deviceType]: { ...(prev[deviceType] || {}), alarmThreshold: raw === '' ? null : Number(raw) }
-                              }));
-                            }}
-                            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
-                            placeholder="-"
-                          />
-                        </div>
+                                <div className="lg:col-span-2">
+                                  <div className="text-xs text-gray-600 mb-1">单位</div>
+                                  <input
+                                    value={unitValue}
+                                    onChange={(e) => {
+                                      const raw = e.target.value;
+                                      updateRuleAt(idx, { unit: raw.trim() ? raw : null });
+                                    }}
+                                    className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                                    placeholder="例如：mm"
+                                  />
+                                </div>
 
-                        <div className="lg:col-span-5">
-                          <div className="text-xs text-gray-600 mb-1">去噪规则</div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <div>
-                              <input
-                                type="number"
-                                min={0}
-                                step={0.1}
-                                value={maxDeltaValue}
-                                onChange={(e) => {
-                                  const raw = e.target.value;
-                                  setDeviceMetaRules(prev => ({
-                                    ...prev,
-                                    [deviceType]: { ...(prev[deviceType] || {}), maxDelta: raw === '' ? null : Number(raw) }
-                                  }));
-                                }}
-                                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
-                                placeholder="最大变化量"
-                              />
+                                <div className="lg:col-span-2">
+                                  <div className="text-xs text-gray-600 mb-1">报警阈值</div>
+                                  <input
+                                    type="number"
+                                    step={0.1}
+                                    value={alarmThresholdValue}
+                                    onChange={(e) => {
+                                      const raw = e.target.value;
+                                      updateRuleAt(idx, { alarmThreshold: raw === '' ? null : Number(raw) });
+                                    }}
+                                    className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                                    placeholder="-"
+                                  />
+                                </div>
+
+                                <div className="lg:col-span-5">
+                                  <div className="text-xs text-gray-600 mb-1">去噪规则</div>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <div>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        step={0.1}
+                                        value={maxDeltaValue}
+                                        onChange={(e) => {
+                                          const raw = e.target.value;
+                                          updateRuleAt(idx, { maxDelta: raw === '' ? null : Number(raw) });
+                                        }}
+                                        className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                                        placeholder="最大变化量"
+                                      />
+                                    </div>
+                                    <div>
+                                      <input
+                                        type="number"
+                                        step={0.1}
+                                        value={minValue}
+                                        onChange={(e) => {
+                                          const raw = e.target.value;
+                                          updateRuleAt(idx, { min: raw === '' ? null : Number(raw) });
+                                        }}
+                                        className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                                        placeholder="下限"
+                                      />
+                                    </div>
+                                    <div>
+                                      <input
+                                        type="number"
+                                        step={0.1}
+                                        value={maxValue}
+                                        onChange={(e) => {
+                                          const raw = e.target.value;
+                                          updateRuleAt(idx, { max: raw === '' ? null : Number(raw) });
+                                        }}
+                                        className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
+                                        placeholder="上限"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <input
-                                type="number"
-                                step={0.1}
-                                value={minValue}
-                                onChange={(e) => {
-                                  const raw = e.target.value;
-                                  setDeviceMetaRules(prev => ({
-                                    ...prev,
-                                    [deviceType]: { ...(prev[deviceType] || {}), min: raw === '' ? null : Number(raw) }
-                                  }));
-                                }}
-                                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
-                                placeholder="下限"
-                              />
-                            </div>
-                            <div>
-                              <input
-                                type="number"
-                                step={0.1}
-                                value={maxValue}
-                                onChange={(e) => {
-                                  const raw = e.target.value;
-                                  setDeviceMetaRules(prev => ({
-                                    ...prev,
-                                    [deviceType]: { ...(prev[deviceType] || {}), max: raw === '' ? null : Number(raw) }
-                                  }));
-                                }}
-                                className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-blue-200"
-                                placeholder="上限"
-                              />
-                            </div>
-                          </div>
-                        </div>
+                          );
+                        })}
+
+                        <button
+                          onClick={addMatchedRule}
+                          className="w-full px-3 py-2 text-xs font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 border border-dashed border-blue-300 rounded-lg transition-colors"
+                        >
+                          + 添加列匹配规则
+                        </button>
                       </div>
                     </div>
                   );
@@ -1304,17 +1425,40 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
               <button
                 onClick={() => {
                   setDeviceMetaRules(prev => {
-                    const next = { ...prev };
+                    const next: Record<string, DeviceMetaRule[]> = { ...prev };
                     for (const k of Object.keys(DEVICE_PRESETS)) {
-                      const preset = DEVICE_PRESETS[k];
-                      const cur = next[k] || {};
-                      const curType = typeof cur.sensorType === 'string' ? cur.sensorType.trim() : '';
-                      const curUnit = typeof cur.unit === 'string' ? cur.unit.trim() : '';
-                      next[k] = {
-                        ...cur,
-                        sensorType: curType ? curType : preset.sensorType,
-                        unit: curUnit ? curUnit : preset.unit
-                      };
+                      const presetRules = DEVICE_PRESETS[k];
+                      const curRules = Array.isArray(next[k]) ? next[k] : [];
+                      if (curRules.length === 0) {
+                        next[k] = presetRules.map((p) => ({
+                          match: p.match || null,
+                          sensorType: p.sensorType,
+                          unit: p.unit
+                        }));
+                        continue;
+                      }
+                      const curByMatch = new Map<string, DeviceMetaRule>();
+                      for (const r of curRules) {
+                        const key = String(r?.match || '').trim().toLowerCase();
+                        curByMatch.set(key, r);
+                      }
+                      next[k] = presetRules.map((p) => {
+                        const key = String(p.match || '').trim().toLowerCase();
+                        const cur = curByMatch.get(key);
+                        const curType = typeof cur?.sensorType === 'string' ? cur.sensorType.trim() : '';
+                        const curUnit = typeof cur?.unit === 'string' ? cur.unit.trim() : '';
+                        return {
+                          ...(cur || {}),
+                          match: p.match || null,
+                          sensorType: curType ? curType : p.sensorType,
+                          unit: curUnit ? curUnit : p.unit
+                        };
+                      });
+                      const extraRules = curRules.filter((r) => {
+                        const key = String(r?.match || '').trim().toLowerCase();
+                        return !presetRules.some((p) => String(p.match || '').trim().toLowerCase() === key);
+                      });
+                      if (extraRules.length > 0) next[k] = [...next[k], ...extraRules];
                     }
                     return next;
                   });
