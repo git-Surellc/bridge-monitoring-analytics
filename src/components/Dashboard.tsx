@@ -1226,9 +1226,7 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
               <div className="grid grid-cols-1 gap-4">
                 {allDeviceTypeList.map((deviceType) => {
                   const rules: DeviceMetaRule[] = Array.isArray(deviceMetaRules[deviceType]) ? deviceMetaRules[deviceType] : [];
-                  const defaultRule: DeviceMetaRule = rules.find((r) => !String(r?.match || '').trim()) || {};
-                  const matchedRules: DeviceMetaRule[] = rules.filter((r) => String(r?.match || '').trim());
-                  const orderedRules: DeviceMetaRule[] = [defaultRule, ...matchedRules];
+                  const defaultCount = rules.filter((r) => !String(r?.match || '').trim()).length;
 
                   const updateRuleAt = (idx: number, patch: Partial<DeviceMetaRule>) => {
                     setDeviceMetaRules(prev => {
@@ -1247,11 +1245,11 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                     });
                   };
 
-                  const addMatchedRule = () => {
+                  const addRule = () => {
                     setDeviceMetaRules(prev => {
                       const cur = Array.isArray(prev[deviceType]) ? prev[deviceType] : [];
-                      const next = [...cur, { match: '', sensorType: null, unit: null }];
-                      return { ...prev, [deviceType]: next };
+                      const newRule: DeviceMetaRule = { match: null, sensorType: null, unit: null };
+                      return { ...prev, [deviceType]: [...cur, newRule] };
                     });
                   };
 
@@ -1261,14 +1259,19 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-gray-900 break-words">{deviceType}</div>
                           <div className="text-xs text-gray-500">
-                            来源：设备类型 / Excel sheet{matchedRules.length > 0 ? ` · 共 ${orderedRules.length} 条规则（1 默认 + ${matchedRules.length} 列匹配）` : ''}
+                            来源：设备类型 / Excel sheet · {rules.length} 条规则{defaultCount > 0 ? `（含 ${defaultCount} 条默认）` : ''}
                           </div>
                         </div>
                       </div>
 
                       <div className="space-y-3">
-                        {orderedRules.map((r, idx) => {
-                          const isDefault = idx === 0;
+                        {rules.length === 0 && (
+                          <div className="text-xs text-gray-500 py-2">暂无规则，点击下方按钮添加</div>
+                        )}
+
+                        {rules.map((r, idx) => {
+                          const matchTrimmed = String(r?.match || '').trim();
+                          const isDefault = !matchTrimmed;
                           const matchValue = r?.match ?? '';
                           const unitValue = r?.unit ?? '';
                           const sensorTypeValue = r?.sensorType ?? '';
@@ -1283,26 +1286,22 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                             >
                               <div className="flex items-center justify-between gap-2 mb-2">
                                 <div className="flex items-center gap-2 min-w-0">
-                                  <span className={`text-xs font-medium px-2 py-0.5 rounded ${isDefault ? 'bg-gray-200 text-gray-700' : 'bg-blue-100 text-blue-700'}`}>
-                                    {isDefault ? '默认规则' : '列匹配规则'}
+                                  <span className={`text-xs font-medium px-2 py-0.5 rounded whitespace-nowrap ${isDefault ? 'bg-gray-200 text-gray-700' : 'bg-blue-100 text-blue-700'}`}>
+                                    {isDefault ? '默认规则（兜底）' : '列匹配规则'}
                                   </span>
-                                  {!isDefault && (
-                                    <input
-                                      value={matchValue}
-                                      onChange={(e) => updateRuleAt(idx, { match: e.target.value || null })}
-                                      className="w-32 px-2 py-1 text-xs rounded border border-gray-200 bg-white focus:border-blue-400 focus:ring-blue-200"
-                                      placeholder="列名含…"
-                                    />
-                                  )}
+                                  <input
+                                    value={matchValue}
+                                    onChange={(e) => updateRuleAt(idx, { match: e.target.value.trim() ? e.target.value : null })}
+                                    className="flex-1 min-w-[8rem] max-w-[14rem] px-2 py-1 text-xs rounded border border-gray-200 bg-white focus:border-blue-400 focus:ring-blue-200"
+                                    placeholder={isDefault ? '默认（兜底所有列）' : '列名含…'}
+                                  />
                                 </div>
-                                {!isDefault && (
-                                  <button
-                                    onClick={() => deleteRuleAt(idx)}
-                                    className="text-xs text-red-600 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors"
-                                  >
-                                    删除
-                                  </button>
-                                )}
+                                <button
+                                  onClick={() => deleteRuleAt(idx)}
+                                  className="text-xs text-red-600 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors whitespace-nowrap"
+                                >
+                                  删除
+                                </button>
                               </div>
 
                               <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
@@ -1405,10 +1404,10 @@ export function Dashboard({ structures, importLogs = [], onClear, onBack, custom
                         })}
 
                         <button
-                          onClick={addMatchedRule}
+                          onClick={addRule}
                           className="w-full px-3 py-2 text-xs font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 border border-dashed border-blue-300 rounded-lg transition-colors"
                         >
-                          + 添加列匹配规则
+                          + 添加规则
                         </button>
                       </div>
                     </div>
